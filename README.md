@@ -22,7 +22,7 @@ You need python3. To install:
 
 ```bash
 git clone https://github.com/google-research/mt-metrics-eval.git
-cd mt_metrics_eval
+cd mt-metrics-eval
 pip install .
 ```
 
