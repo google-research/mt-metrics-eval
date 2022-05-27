@@ -40,6 +40,7 @@ import sys
 from absl import app
 from absl import flags
 from mt_metrics_eval import data
+from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
 import scipy.stats
 import glob
@@ -60,6 +61,13 @@ flags.DEFINE_string(
     'echosys', None,
     'Like --echo, but repeats output once for each system, with "sysname txt " '
     'fields prepended.')
+flags.DEFINE_bool(
+    'scores', False,
+    'Dump all scores to a tsv file. For each system, write the  following info '
+    'for each segment: system name, doc id, segment-level scores, document-'
+    'level scores (if available), and system-level scores. Gold scores are '
+    'written first, followed by metrics scores. None values are written '
+    'whenever scores aren\'t available for the given level and/or system.')
 flags.DEFINE_string(
     'test_set', None, 'Test set to use (see --list).', short_name='t')
 flags.DEFINE_string(
@@ -73,7 +81,7 @@ flags.DEFINE_string(
     'contain a system name and a score, separated by a tab. '
     'The number of entries per system determines granularity: '
     'one per system, document, or segment in the test set. Document and '
-    'segment scores must be ordered the same as in the test set.',
+    'segment scores must  from all metrics.',
     short_name='i')
 flags.DEFINE_string(
     'output', None, 'Output file, defaults to STDOUT.', short_name='o')
@@ -111,6 +119,63 @@ flags.DEFINE_string(
 FLAGS = flags.FLAGS
 
 
+def PrintScores(evs):
+  """Print all scores in tsv format. See doc for --scores option."""
+
+  sys_names = sorted(evs.sys_names)
+  gold_names = sorted(evs.human_score_names)
+  metric_names = sorted(evs.metric_names)
+
+  fields = ['system-name', 'doc-id']
+  fields += [f'{g}:seg' for g in gold_names]
+  fields += [f'{m}:seg' for m in metric_names]
+  if evs.StdHumanScoreName('doc'):
+    fields += [f'{g}:doc' for g in gold_names]
+    fields += [f'{m}:doc' for m in metric_names]
+  fields += [f'{g}:sys' for g in gold_names]
+  fields += [f'{m}:sys' for m in metric_names]
+  header = '\t'.join(fields) + '\n'
+
+  # Map from seg-id -> doc_name
+  docs = [None] * len(evs.src)
+  for doc_name in evs.doc_names:
+    for i in range(*evs.docs[doc_name]):
+      docs[i] = doc_name
+  assert None not in docs
+
+  def _Score(level, scorer, sysname, doc_id, seg_id):
+    scores = evs.Scores(level, scorer)
+    if scores is None or sysname not in scores:
+      return 'None'
+    if level == 'seg':
+      return f'{scores[sysname][seg_id]}'
+    elif level == 'doc':
+      return f'{scores[sysname][doc_id]}'
+    elif level == 'sys':
+      return f'{scores[sysname][0]}'
+    else:
+      assert False
+
+  fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
+  with fh:
+    fh.write(header)
+    for n in sys_names:
+      for i in range(len(evs.src)):
+        doc_name = docs[i]
+        doc_beg, doc_end = evs.docs[doc_name]
+        doc_pos = i - doc_beg
+        assert doc_pos >= 0 and doc_pos < doc_end - doc_beg
+        fields = [n, doc_name]
+        fields += [_Score('seg', g, n, doc_pos, i) for g in gold_names]
+        fields += [_Score('seg', m, n, doc_pos, i) for m in metric_names]
+        if evs.StdHumanScoreName('doc'):
+          fields += [_Score('doc', g, n, doc_pos, i) for g in gold_names]
+          fields += [_Score('doc', m, n, doc_pos, i) for m in metric_names]
+        fields += [_Score('sys', g, n, doc_pos, i) for g in gold_names]
+        fields += [_Score('sys', m, n, doc_pos, i) for m in metric_names]
+        fh.write('\t'.join(fields) + '\n')
+
+
 def PrintCorrelation(evs, scorefile, tag, outfile):
   """Read scores from score file, print correlation stats, return values."""
 
@@ -129,9 +194,9 @@ def PrintCorrelation(evs, scorefile, tag, outfile):
         'Number of scores/system (%d) doesn\'t match any known granularity in '
         '%s/%s' % (num_scores, FLAGS.test_set, FLAGS.language_pair))
 
-  gold_scores = evs.Scores(level, FLAGS.gold)
-  std_scorer = data.DATA[FLAGS.test_set]['std_scorers'][level]
+  std_scorer = evs.StdHumanScoreName(level)
   gold_name = std_scorer if FLAGS.gold == 'std' else FLAGS.gold
+  gold_scores = evs.Scores(level, gold_name)
   if gold_scores is None:
     raise ValueError('No scores for %s at %s level.' % (FLAGS.gold, level))
   sys_names = set(gold_scores) - evs.human_sys_names
@@ -142,7 +207,7 @@ def PrintCorrelation(evs, scorefile, tag, outfile):
       raise ValueError(f'No {gold_name} scores for system {n}')
     sys_names.add(n)
 
-  corr = evs.Correlation(level, scores, FLAGS.gold, sys_names)
+  corr = evs.Correlation(gold_scores, scores, sys_names)
   pearson = corr.Pearson(FLAGS.avg)
   spearman = corr.Spearman(FLAGS.avg)
   kendall = corr.Kendall(FLAGS.avg)
@@ -217,10 +282,10 @@ def main(argv):
 
   if FLAGS.list:
     if FLAGS.test_set is None:
-      print('test-sets:', ' '.join(data.DATA))
+      print('test-sets:', ' '.join(meta_info.DATA))
     elif FLAGS.language_pair is None:
       print(f'language pairs for {FLAGS.test_set}:',
-            ' '.join(data.DATA[FLAGS.test_set]['language_pairs']))
+            ' '.join(meta_info.DATA[FLAGS.test_set]))
     else:
       evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair)
       print(
@@ -238,7 +303,13 @@ def main(argv):
   if FLAGS.language_pair is None:
     raise ValueError('No language_pair specified.')
 
-  evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair)
+  evs = data.EvalSet(
+      FLAGS.test_set, FLAGS.language_pair,
+      read_stored_metric_scores=FLAGS.scores)
+
+  if FLAGS.scores:
+    PrintScores(evs)
+    return
 
   if FLAGS.echo is not None or FLAGS.echosys is not None:
     flag_val = FLAGS.echo or FLAGS.echosys

@@ -101,7 +101,8 @@ class CorrFunction:
       warnings.simplefilter('ignore')
       for r1, r2 in zip(mat1, mat2):
         if self._filter_nones:
-          filt = ((v1, v2) for v1, v2 in zip(r1, r2) if v1 is not None)
+          filt = [(v1, v2) for v1, v2 in zip(r1, r2) if v1 is not None]
+          if not filt: continue
           r1, r2 = zip(*filt)
         cv, pv = self._corr_fcn(r1, r2)
         if not math.isnan(cv):

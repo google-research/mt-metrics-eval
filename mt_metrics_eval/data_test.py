@@ -15,17 +15,25 @@
 """Tests for data module."""
 
 from mt_metrics_eval import data
+from mt_metrics_eval import meta_info
 import unittest
 
 
 class EvalSetTest(unittest.TestCase):
 
+  def _std_sys_names(self, evs):
+    return evs.sys_names - evs.human_sys_names - evs.outlier_sys_names
+
   def testWMT20EnDeSysCorrelations(self):
     evs = data.EvalSet('wmt20', 'en-de', True)
     # Spot-checking table 6 in www.statmt.org/wmt20/pdf/2020.wmt-1.77.pdf
     results = {}
+    sys_names = self._std_sys_names(evs)
+    gold_scores = evs.Scores('sys', evs.StdHumanScoreName('sys'))
     for m in 'BLEU', 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
-      results[m] = evs.Correlation('sys', evs.Scores('sys', m)).Pearson()[0]
+      metric_scores = evs.Scores('sys', m + '-ref')
+      results[m] = evs.Correlation(
+          gold_scores, metric_scores, sys_names).Pearson()[0]
     self.assertAlmostEqual(results['BLEU'], 0.825, places=3)
     self.assertAlmostEqual(results['sentBLEU'], 0.823, places=3)
     self.assertAlmostEqual(results['COMET'], 0.863, places=3)
@@ -35,13 +43,12 @@ class EvalSetTest(unittest.TestCase):
 
     # Spot-checking table 7 in www.statmt.org/wmt20/pdf/2020.wmt-1.77.pdf, 3rd
     # column.
-    sys_names = set(evs.sys_names).difference(evs.outlier_sys_names,
-                                              evs._human_sys_names)
-    sys_names.add('Human-A.0')
+    sys_names.add('ref')
     for m in 'BLEU', 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
-      m = m + '-refb'
-      corr = evs.Correlation('sys', evs.Scores('sys', m), sys_names=sys_names)
-      results[m] = corr.Pearson()[0]
+      variant_name = m + '-refb'
+      metric_scores = evs.Scores('sys', variant_name)
+      results[variant_name] = evs.Correlation(
+          gold_scores, metric_scores, sys_names).Pearson()[0]
     self.assertAlmostEqual(results['BLEU-refb'], 0.672, places=3)
     self.assertAlmostEqual(results['sentBLEU-refb'], 0.639, places=3)
     self.assertAlmostEqual(results['COMET-refb'], 0.879, places=3)
@@ -54,8 +61,11 @@ class EvalSetTest(unittest.TestCase):
     # Spot-checking table 12 in www.statmt.org/wmt20/pdf/2020.wmt-1.77.pdf, 4th
     # column (numbers do not match the table, ones here are correct).
     results = {}
+    sys_names = self._std_sys_names(evs)
+    gold_scores = evs.Scores('doc', evs.StdHumanScoreName('doc'))
     for m in 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
-      corr = evs.Correlation('doc', evs.Scores('doc', m))
+      metric_scores = evs.Scores('doc', m + '-ref')
+      corr = evs.Correlation(gold_scores, metric_scores, sys_names)
       c, num_pairs, _, _ = corr.KendallLike()
       self.assertEqual(num_pairs, 275)
       results[m] = c
@@ -70,8 +80,11 @@ class EvalSetTest(unittest.TestCase):
     # Spot-checking table 10 in www.statmt.org/wmt20/pdf/2020.wmt-1.77.pdf, 4th
     # column.
     results = {}
+    sys_names = self._std_sys_names(evs)
+    gold_scores = evs.Scores('seg', evs.StdHumanScoreName('seg'))
     for m in 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
-      corr = evs.Correlation('seg', evs.Scores('seg', m))
+      metric_scores = evs.Scores('seg', m + '-ref')
+      corr = evs.Correlation(gold_scores, metric_scores, sys_names)
       c, num_pairs, _, _ = corr.KendallLike()
       results[m] = c
       self.assertEqual(num_pairs, 4637)
@@ -151,13 +164,14 @@ class EvalSetTest(unittest.TestCase):
         'ta-en': (0.925, 0.829),
         'zh-en': (0.948, 0.950),
     }
-    for lp in data.DATA['wmt20']['language_pairs']:
+    for lp in meta_info.DATA['wmt20']:
       evs = data.EvalSet('wmt20', lp, True)
-      all_sys = set(evs.Scores('sys')) - evs.human_sys_names
-      sent_bleu = evs.Scores('sys', 'sentBLEU')
-      pearson_full = evs.Correlation(
-          'sys', sent_bleu, sys_names=all_sys).Pearson()
-      pearson_no_outlier = evs.Correlation('sys', sent_bleu).Pearson()
+      all_sys = evs.sys_names - evs.human_sys_names
+      gold_scores = evs.Scores('sys', evs.StdHumanScoreName('sys'))
+      sent_bleu = evs.Scores('sys', 'sentBLEU-ref')
+      pearson_full = evs.Correlation(gold_scores, sent_bleu, all_sys).Pearson()
+      pearson_no_outlier = evs.Correlation(
+          gold_scores, sent_bleu, all_sys - evs.outlier_sys_names).Pearson()
       self.assertAlmostEqual(pearson_full[0], expected[lp][0], places=3)
       self.assertAlmostEqual(pearson_no_outlier[0], expected[lp][1], places=3)
 
@@ -184,13 +198,15 @@ class EvalSetTest(unittest.TestCase):
         'ta-en': (0.162, 0.069),
         'zh-en': (0.093, 0.060),
     }
-    for lp in data.DATA['wmt20']['language_pairs']:
+    for lp in meta_info.DATA['wmt20']:
       evs = data.EvalSet('wmt20', lp, True)
-      all_sys = set(evs.Scores('seg')) - evs.human_sys_names
-      sent_bleu = evs.Scores('seg', 'sentBLEU')
+      all_sys = evs.sys_names - evs.human_sys_names
+      gold_scores = evs.Scores('seg', evs.StdHumanScoreName('seg'))
+      sent_bleu = evs.Scores('seg', 'sentBLEU-ref')
       kendall_full = evs.Correlation(
-          'seg', sent_bleu, sys_names=all_sys).KendallLike()
-      kendall_no_outlier = evs.Correlation('seg', sent_bleu).KendallLike()
+          gold_scores, sent_bleu, all_sys).KendallLike()
+      kendall_no_outlier = evs.Correlation(
+          gold_scores, sent_bleu, all_sys - evs.outlier_sys_names).KendallLike()
       self.assertAlmostEqual(kendall_full[0], expected[lp][0], places=3)
       self.assertAlmostEqual(kendall_no_outlier[0], expected[lp][1], places=3)
 
@@ -217,9 +233,14 @@ class EvalSetTest(unittest.TestCase):
         'ru-en': 0.879,
         'zh-en': 0.899,
     }
-    for lp in data.DATA['wmt19']['language_pairs']:
+    for lp in meta_info.DATA['wmt19']:
       evs = data.EvalSet('wmt19', lp, True)
-      pearson = evs.Correlation('sys', evs.Scores('sys', 'BLEU')).Pearson()
+      gold_scores = evs.Scores('sys', evs.StdHumanScoreName('sys'))
+      bleu_scores = evs.Scores('sys', 'BLEU-ref')
+      # Need to filter here because not all lps have wmt-z score for all
+      # systems.
+      sys_names = self._std_sys_names(evs).intersection(gold_scores)
+      pearson = evs.Correlation(gold_scores, bleu_scores, sys_names).Pearson()
       self.assertAlmostEqual(pearson[0], expected[lp], places=3)
 
   def testWMT19BEERSegScores(self):
@@ -245,9 +266,14 @@ class EvalSetTest(unittest.TestCase):
         'ru-en': 0.189,
         'zh-en': 0.371,
     }
-    for lp in data.DATA['wmt19']['language_pairs']:
+    for lp in meta_info.DATA['wmt19']:
       evs = data.EvalSet('wmt19', lp, True)
-      kl = evs.Correlation('seg', evs.Scores('seg', 'BEER')).KendallLike()
+      gold_scores = evs.Scores('seg', evs.StdHumanScoreName('seg'))
+      beer_scores = evs.Scores('seg', 'BEER-ref')
+      # Need to filter here because not all lps have wmt-z score for all
+      # systems.
+      sys_names = self._std_sys_names(evs).intersection(gold_scores)
+      kl = evs.Correlation(gold_scores, beer_scores, sys_names).KendallLike()
       self.assertAlmostEqual(kl[0], expected[lp], places=3)
 
 
