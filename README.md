@@ -31,7 +31,7 @@ pip install .
 Start by downloading the database (this is also required before using the API):
 
 ```bash
-alias mtme='python3 -m mt-metrics-eval.mtme'
+alias mtme='python3 -m mt_metrics_eval.mtme'
 mtme --download  # Puts ~1G of data into $HOME/.mt-metrics-eval.
 mtme --help  # List options.
 ```
