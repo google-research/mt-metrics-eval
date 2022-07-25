@@ -22,7 +22,9 @@ import glob
 
 flags.DEFINE_string(
     'scores_file', None,
-    'Scores file to be verified.', required=True)
+    'Scores file to be verified. If not supplied, check all scores files for '
+    'given test_set, doing on-the-fly-repair, ie only report non-repairable '
+    'errors.')
 flags.DEFINE_bool('human_scores', False, 'File contains human scores.')
 flags.DEFINE_string(
     'data_dir', None, 'Optional root directory for mt_metrics_eval data.')
@@ -45,8 +47,21 @@ def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
-  evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair, False, FLAGS.data_dir)
-  scores_file = os.path.basename(FLAGS.scores_file)
+  if FLAGS.data_dir is not None and not gfile.Exists(FLAGS.data_dir):
+    raise ValueError(f'Data file doesn\'t exist: {FLAGS.data_dir}')
+
+  if FLAGS.scores_file:
+    scores_file = os.path.basename(FLAGS.scores_file)
+  else:
+    scores_file = None
+  read_all_scores = scores_file is None
+  evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair,
+                     read_stored_metric_scores=read_all_scores,
+                     path=FLAGS.data_dir,
+                     strict=False)
+
+  if read_all_scores:
+    return
 
   # Check filename conventions, fail with error if incorrect.
   if FLAGS.human_scores:

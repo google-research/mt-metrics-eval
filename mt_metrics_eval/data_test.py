@@ -16,6 +16,7 @@
 
 from mt_metrics_eval import data
 from mt_metrics_eval import meta_info
+import numpy as np
 import unittest
 
 
@@ -275,6 +276,33 @@ class EvalSetTest(unittest.TestCase):
       sys_names = self._std_sys_names(evs).intersection(gold_scores)
       kl = evs.Correlation(gold_scores, beer_scores, sys_names).KendallLike()
       self.assertAlmostEqual(kl[0], expected[lp], places=3)
+
+
+class DataTest(unittest.TestCase):
+
+  def testAssignRanks(self):
+
+    sig_matrix = np.array([
+        0, 1, 1, 1,
+        0, 0, 1, 1,
+        0, 0, 0, 1,
+        0, 0, 0, 0]).reshape((4, 4))
+    self.assertEqual(data.AssignRanks(sig_matrix, 0.5), [1, 1, 1, 1])
+    self.assertEqual(data.AssignRanks(sig_matrix, 1.0), [1, 2, 3, 4])
+
+    sig_matrix = np.array([
+        0, 1, 0, 1,
+        0, 0, 1, 1,
+        0, 0, 0, 1,
+        0, 0, 0, 0]).reshape((4, 4))
+    self.assertEqual(data.AssignRanks(sig_matrix, 0.5), [1, 1, 2, 2])
+
+    sig_matrix = np.array([
+        0, 0, 1, 1,
+        0, 0, 1, 1,
+        0, 0, 0, 0,
+        0, 0, 0, 0]).reshape((4, 4))
+    self.assertEqual(data.AssignRanks(sig_matrix, 0.5), [1, 2, 2, 3])
 
 
 if __name__ == '__main__':

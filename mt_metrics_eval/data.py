@@ -18,12 +18,12 @@ import collections
 import copy
 import os
 import tarfile
-from typing import Dict, Iterable, List, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Set
 import urllib.request
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
+import numpy as np
 import glob
-
 
 
 
@@ -37,7 +37,8 @@ class EvalSet:
                lp: str,
                read_stored_metric_scores: bool = False,
                info: meta_info.MetaInfo = None,
-               path: str = None):
+               path: str = None,
+               strict: bool = False):
     """Load data for a given test set and language pair.
 
     By default this will load meta-info and read data for one of the known
@@ -56,6 +57,9 @@ class EvalSet:
       path: Optional path to parent directory: path/name should contain data
         structured as described under 'File organization and naming convention'
         in the README.
+      strict: If False, score files that are missing all entries for some
+        systems will be 'repaired' by silently adding 0 scores for those systems
+        instead of raising an exception.
     """
     self.name = name
     self.lp = lp
@@ -72,7 +76,7 @@ class EvalSet:
     self._std_human_scores['doc'] = self.info.std_gold_doc
     self._std_human_scores['seg'] = self.info.std_gold_seg
 
-    self._ReadDataset(name, lp, read_stored_metric_scores, path)
+    self._ReadDataset(name, lp, read_stored_metric_scores, path, strict)
 
     # Check compatibility between info and data read in.
     # No checks for primary metrics because there are no hard requirements:
@@ -273,7 +277,7 @@ class EvalSet:
 
     Args:
       scores_map: Map from system-names to scores as returned by ReadScoreFile.
-      scorer_name: Name of this scorer, xxx.
+      scorer_name: Name of this scorer, either a metric or human score.
       level: Granularity, one of 'sys', 'doc', or 'seg'.
       human: True for human scores, False for metric scores.
       repair: If True and if human is False, add 0s for missing systems.
@@ -308,7 +312,7 @@ class EvalSet:
               f'{sys_name}')
     return added_scores
 
-  def _ReadDataset(self, name, lp, read_stored_metric_scores, path):
+  def _ReadDataset(self, name, lp, read_stored_metric_scores, path, strict):
     """Read data for given name and language pair."""
 
     if not path:
@@ -366,7 +370,8 @@ class EvalSet:
       if level in self._scores:
         for scorer_name, scores_map in self._scores[level].items():
           self.CheckScores(scores_map, scorer_name, level,
-                           scorer_name in self.human_score_names)
+                           scorer_name in self.human_score_names,
+                           repair=not strict)
 
 
 def LocalDir(root_only=True):
@@ -460,7 +465,7 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
   gold_scores = evs.Scores(level, gold_name)
   sys_names = sys_names.intersection(gold_scores)
 
-  # Compute correlations for all specified metrics.
+  # Generate 'Correlation' objects for all specified metrics.
   correlations = {}  # metric -> Correlation
   for metric_name in evs.metric_names:
     base_name, metric_refs = evs.ParseMetricName(metric_name)
@@ -475,3 +480,109 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
         gold_scores, metric_scores, sys_names)
 
   return correlations
+
+
+def CompareMetrics(
+    metric_corrs: dict[str, stats.Correlation],
+    corr_fcn: Callable[[list[float], list[float]], tuple[float, float]],
+    average_by: str = 'none', k: int = 1000, pval: float = 0.05,
+    ) -> tuple[dict[str, tuple[float, float]], Any]:
+  """Compare a set of metrics using a given correlation function.
+
+  This function uses a permutation test to compute significant differences
+  between correlations; it can be very slow when correlation vectors are large,
+  especially when averaging is used.
+
+  Args:
+    metric_corrs: Map from metric names to stats.Correlation objects containing
+      metric and gold scores for the same data. This is the format returned by
+      GetCorrelations().
+    corr_fcn: Function for generating correlations from metric and gold score
+      vectors. Correlations are assumed to be in the first element of the
+      returned tuple (2nd element is ignored). Pass a function like
+      scipy.stats.pearsonr rather than a stats.CorrFunction wrapper (the point
+      of this function is to save you the trouble of creating the wrapper
+      yourself).
+    average_by: What to average over when computing final correlations:
+      'none' - Treat all scores as single vectors, and compute a single
+        correlation. This is the only option that makes sense for system-level
+        scores.
+      'item' - Average over correlations for vectors of scores for the same item
+        across all systems.
+      'sys' - Average over the correlations for vectors of scores for the same
+        system across all items.
+    k: Number of resampling runs for PermutationSigDiff test.
+    pval: p-value for determining significant differences in ranks.
+
+  Returns:
+    1. Mapping from metric name to (correlation, rank) pairs, where rank is
+       the rank of the metric's significance cluster. Keys are ordered by
+       decreasing correlation.
+    2. Significance matrix: a square numpy array whose rows and columns
+       represent metrics, sorted to match the keys in the returned correlation
+       map. sig_matrix[i, j] contains the p-value for the null hypothesis that
+       the correlation for metric j is >= the correlation for metric i. Only
+       entries for which j > i are valid.
+  """
+  assert metric_corrs
+  assert average_by in ('none', 'item', 'sys'), 'Bad average_by value.'
+
+  first_corr = list(metric_corrs.values())[0]
+  corr_wrapper = stats.CorrFunction(
+      corr_fcn,
+      num_sys=0 if average_by == 'none' else first_corr.num_sys,
+      filter_nones=first_corr.none_count,
+      by_system=average_by == 'sys')
+
+  # Compute metric correlations, ordered by decreasing correlation.
+  corrs_and_ranks = {}
+  for m, c in metric_corrs.items():
+    corrs_and_ranks[m] = [corr_wrapper(c.gold_scores, c.metric_scores)[0], 0]
+  corrs_and_ranks = dict(
+      sorted(corrs_and_ranks.items(), key=lambda x: -x[1][0]))
+
+  # Compute top half of significance matrix.
+  n = len(corrs_and_ranks)
+  sig_matrix = np.zeros((n, n))
+  for i in range(n):
+    m1 = list(corrs_and_ranks)[i]
+    for j in range(i + 1, n):
+      m2 = list(corrs_and_ranks)[j]
+      sig_matrix[i, j] = stats.PermutationSigDiff(
+          metric_corrs[m2], metric_corrs[m1], corr_wrapper, k)
+
+  # Determine ranks.
+  ranks = AssignRanks(sig_matrix, pval)
+  for i, m in enumerate(corrs_and_ranks):
+    corrs_and_ranks[m][1] = ranks[i]
+
+  return corrs_and_ranks, sig_matrix
+
+
+def AssignRanks(sig_matrix, pval):
+  """Assign ranks to metrics from a pairwise significance matrix.
+
+  Args:
+    sig_matrix: Upper-diagonal square numpy array whose rows and columns
+      represent metrics, sorted in order of decreasing correlation.
+      sig_matrix[i, j] contains the p-value for the null hypothesis that the
+      correlation for metric j is >= the correlation for metric i.
+    pval: Maximum p-value threshold for assigning significance.
+
+  Returns:
+    List whose ith value contains the rank for the ith metric. Metrics assigned
+    rank r are those not significantly outperformed by any other metric of rank
+    r, nor outperformed by any metric of rank < r.
+  """
+  assert sig_matrix.ndim == 2
+  assert sig_matrix.shape[0] == sig_matrix.shape[1]
+  n = sig_matrix.shape[0]
+  ranks = [0] * n
+  current_rank = 1
+  start_index = 0
+  for i in range(n):
+    if any(sig_matrix[:, i][start_index: i] <= pval):
+      current_rank += 1
+      start_index = i
+    ranks[i] = current_rank
+  return ranks

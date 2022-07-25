@@ -67,25 +67,36 @@ class CorrFunction:
   """Wrap any correlation from scipy.stats, with optional averaging and Nones.
 
   This is a functor with the same interface as the scipy.stats functions:
-  call with two float vectors, returns a correlation and pvalue.
-
-  Averaging requires that you construct with num_sys > 0, indicating that input
-  vectors will contain num_sys sets of item scores grouped by system. The
-  returned correlation and pvalue are averages over per-item correlations. Short
-  per-item lists can lead to repeated scores that make correlations undefined;
-  these are discarded, and the Corr() function returns the number of items that
-  were actually used (last value of the returned triple).
-
-  Optional None-filtering checks for None entries in the first vector argument
-  only (assumed to represent gold scores), and filters both vectors in tandem
-  before computing correlations. When used with averaging, this can result in
-  empty vectors and undefined correlations that are handled as described above.
+  call with two float vectors, returns a correlation and pvalue. It wraps an
+  arbitrary correlation function to provide optional averaging over per-system
+  or per-item scores and removal of None entries.
   """
 
-  def __init__(self, corr_fcn, num_sys=0, filter_nones=False):
+  def __init__(self, corr_fcn, num_sys=0, filter_nones=False, by_system=False):
+    """Construct with correlation function and optional arguments.
+
+    Args:
+      corr_fcn: Function that maps two float vectors to a (correlation, pvalue)
+        tuple, for instance scipy.stats.pearsonr.
+      num_sys: If greater than 0, indicates that the vector arguments to
+        corr_fcn contain num_sys blocks of item scores grouped by system. The
+        returned correlation and pvalue are averages over per-item correlations.
+        Short per-item lists can lead to repeated scores that make correlations
+        undefined; these are discarded, and the Corr() function returns the
+        number of items that were actually used (last value of the returned
+        triple). If num_sys is 0, a single correlation will be computed over the
+        input vectors.
+      filter_nones: If true, any None values in the first vector argument
+        (assumed to represent gold scores) are filtered in tandem from both
+        vector arguments before computing correlations.
+      by_system: If true, this computes averages over correlations for the
+        blocks of scores for each system, rather than for the lists of items at
+        the same position within each block. No effect if num_sys is 0.
+    """
     self._corr_fcn = corr_fcn
     self._num_sys = num_sys
     self._filter_nones = filter_nones
+    self._by_system = by_system and num_sys > 0
 
   def __call__(self, vect1, vect2):
     return self.Corr(vect1, vect2)[:2]
@@ -94,8 +105,11 @@ class CorrFunction:
     """Return correlation, pvalue, and number of items used for averaging."""
     # Reshape into item x system score matrices, for average over items.
     num_sys = self._num_sys or len(vect1)
-    mat1 = np.asarray(vect1).reshape(num_sys, -1).transpose()
-    mat2 = np.asarray(vect2).reshape(num_sys, -1).transpose()
+    mat1 = np.asarray(vect1).reshape(num_sys, -1)
+    mat2 = np.asarray(vect2).reshape(num_sys, -1)
+    if not self._by_system:
+      mat1 = mat1.transpose()
+      mat2 = mat2.transpose()
     tot_corr, tot_pval, n = 0, 0, 0
     with warnings.catch_warnings():
       warnings.simplefilter('ignore')

@@ -48,7 +48,12 @@ class CorrelationTest(unittest.TestCase):
     cf = stats.CorrFunction(scipy.stats.pearsonr)
     self.assertEqual(cf(v1, v2), scipy.stats.pearsonr(v1, v2))
 
-    # Missing entries.
+    # Default by_system behavior is identical to scipy.stats.
+    v1, v2 = [1, 2, 3, 4, 5, 6], [2, 1, 4, 3, 5, 6]
+    cf = stats.CorrFunction(scipy.stats.pearsonr, by_system=True)
+    self.assertEqual(cf(v1, v2), scipy.stats.pearsonr(v1, v2))
+
+   # Missing entries.
     cf = stats.CorrFunction(scipy.stats.pearsonr, filter_nones=True)
     v1, v2 = [1, None, 3, 4, 5, 6], [2, 1, 4, 3, 5, 6]
     e1, e2 = [1, 3, 4, 5, 6], [2, 4, 3, 5, 6]
@@ -59,6 +64,16 @@ class CorrelationTest(unittest.TestCase):
     cf = stats.CorrFunction(scipy.stats.pearsonr, num_sys=3)
     p1 = scipy.stats.pearsonr([1, 3, 5], [2, 8, 5])
     p2 = scipy.stats.pearsonr([2, 4, 6], [1, 3, 6])
+    c12 = cf(v1, v2)
+    self.assertAlmostEqual(c12[0], (p1[0] + p2[0]) / 2, places=3)
+    self.assertAlmostEqual(c12[1], (p1[1] + p2[1]) / 2, places=3)
+
+    # Averaging by system.
+    v1, v2 = [1, 2, 3, 4, 5, 6], [2, 1, 8, 3, 5, 6]
+    cf = stats.CorrFunction(
+        scipy.stats.pearsonr, num_sys=2, by_system=True)
+    p1 = scipy.stats.pearsonr([1, 2, 3], [2, 1, 8])
+    p2 = scipy.stats.pearsonr([4, 5, 6], [3, 5, 6])
     c12 = cf(v1, v2)
     self.assertAlmostEqual(c12[0], (p1[0] + p2[0]) / 2, places=3)
     self.assertAlmostEqual(c12[1], (p1[1] + p2[1]) / 2, places=3)
@@ -147,8 +162,8 @@ class CorrelationTest(unittest.TestCase):
     corr2.gold_scores = [1, None, 3, 4, 5, 6]
     corr_fcn = stats.CorrFunction(scipy.stats.pearsonr, 3, filter_nones=True)
     p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
-
     self.assertGreater(p, 0)
+
     # KendallLike
     corr_fcn = stats.KendallLike(3, thresh=0)
     p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
