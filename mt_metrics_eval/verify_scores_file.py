@@ -47,9 +47,6 @@ def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
-  if FLAGS.data_dir is not None and not gfile.Exists(FLAGS.data_dir):
-    raise ValueError(f'Data file doesn\'t exist: {FLAGS.data_dir}')
-
   if FLAGS.scores_file:
     scores_file = os.path.basename(FLAGS.scores_file)
   else:
