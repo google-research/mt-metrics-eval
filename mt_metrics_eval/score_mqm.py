@@ -16,6 +16,7 @@
 
 import collections
 import csv
+import json
 from absl import app
 from absl import flags
 import glob
@@ -27,13 +28,14 @@ flags.DEFINE_string(
     'Major/Non-translation!:25 Minor/Fluency/Punctuation:0.1',
     'List of weight specs, in format: "severity[/category[/subcategory]]:wt". '
     'The most specific match is applied to each error.')
-flags.DEFINE_string('level', 'seg', 'Level for output scores: seg, doc, or sys')
+flags.DEFINE_bool('unbabel', False, 'Input tsv is in Unbabel format.')
 flags.DEFINE_bool(
-    'raters', False,
-    'Write individual rater scores and ids after main score for seg level.')
+    'recompute_unbabel', False,
+    'Apply Google-style weights to Unbabel ratings rather than reading scores '
+    'directly from mqm field in last column of tsv.')
 flags.DEFINE_bool(
-    'docs', False,
-    'Write doc name after main score (and raters if specified) for seg level.')
+    'force_contiguous', True,
+    'Raise an error if annotated segments within a doc aren\'t contiguous')
 
 FLAGS = flags.FLAGS
 
@@ -55,61 +57,47 @@ def main(argv):
     c, w = e.split(':')
     weights[c] = float(w)
 
-  scores = {}  # sys -> seg -> rater -> score
-  docs = {}  # doc -> [beg, end]
-  num_segs = 0
+  scores = {}  # sys -> doc > doc_id -> rater -> [score]
+  quoting = csv.QUOTE_MINIMAL if FLAGS.unbabel else csv.QUOTE_NONE
   with open(FLAGS.input) as f:
-    for row in csv.DictReader(f, delimiter='\t', quoting=csv.QUOTE_NONE):
-
-      system, seg_id, rater = row['system'], int(row['seg_id']), row['rater']
-      num_segs = max(seg_id, num_segs)
-      score = Score(weights, [row['severity']] + row['category'].split('/'))
+    for row in csv.DictReader(f, delimiter='\t', quoting=quoting):
+      system, doc, doc_id = row['system'], row['doc'], int(row['doc_id'])
+      if FLAGS.unbabel and not FLAGS.recompute_unbabel:
+        score = json.loads(row['misc'])['mqm']
+      else:
+        score = Score(weights, [row['severity']] + row['category'].split('/'))
       if system not in scores:
         scores[system] = {}
-      if seg_id not in scores[system]:
-        scores[system][seg_id] = collections.defaultdict(float)
-      scores[system][seg_id][rater] += score
+      if doc not in scores[system]:
+        scores[system][doc] = {}
+      if doc_id not in scores[system][doc]:
+        scores[system][doc][doc_id] = collections.defaultdict(list)
+      scores[system][doc][doc_id][row['rater']].append(score)
 
-      doc = row['doc']
-      if doc not in docs:
-        docs[doc] = [9999999, 0]
-      b, e = docs[doc]
-      docs[doc] = [min(b, seg_id), max(e, seg_id + 1)]
+  if FLAGS.force_contiguous:
+    for system in scores:
+      for doc in scores[system]:
+        ids = sorted(scores[system][doc])
+        if ids != list(range(min(ids), max(ids) + 1)):
+          raise ValueError(f'Non-contiguous segments for {system}/{doc}')
 
   with open(FLAGS.output, 'w') as f:
-    if FLAGS.level == 'seg':
-      if FLAGS.docs:
-        seg_docs = {}
-        for doc in docs:
-          for seg_id in range(*docs[doc]):
-            seg_docs[seg_id] = doc
-      for system, segs in scores.items():
-        for seg_id in range(1, num_segs + 1):
-          raters, scores = segs[seg_id].keys(), segs[seg_id].values()
-          avg = -sum(scores) / len(scores)
-          out_str = '%s %f' % (system, avg)
-          if FLAGS.raters:
-            out_str += ' ' + ' '.join(str(s) for s in scores)
-            out_str += ' ' + ' '.join(raters)
-          if FLAGS.docs:
-            out_str += ' ' + seg_docs[seg_id]
-          f.write(out_str + '\n')
-    elif FLAGS.level == 'doc':
-      for system, segs in scores.items():
-        for b, e in docs.values():
-          score = 0
-          for seg_id in range(b, e):
-            vals = segs[seg_id].values()
-            score += sum(vals) / len(vals)
-          f.write('%s %f\n' % (system, -score / (e - b)))
-    elif FLAGS.level == 'sys':
-      for system, segs in scores.items():
-        score = 0
-        for seg_id in range(1, num_segs + 1):
-          vals = segs[seg_id].values()
-          score += sum(vals) / len(vals)
-        f.write('%s %f\n' % (system, -score / num_segs))
-
+    for system in scores:
+      for doc in scores[system]:
+        for doc_id in sorted(scores[system][doc]):
+          rater_scores = {}
+          for rater, vals in scores[system][doc][doc_id].items():
+            if FLAGS.unbabel and not FLAGS.recompute_unbabel:
+              rater_scores[rater] = sum(vals) / len(vals)
+            else:
+              rater_scores[rater] = sum(vals)
+          global_score = sum(rater_scores.values()) / len(rater_scores)
+          if not FLAGS.unbabel or FLAGS.recompute_unbabel:
+            global_score *= -1
+          f.write(f'{system}\t{doc}\t{doc_id}\t{global_score}')
+          for rater in sorted(rater_scores):
+            f.write(f'\t{rater}={rater_scores[rater]}')
+          f.write('\n')
 
 if __name__ == '__main__':
   app.run(main)

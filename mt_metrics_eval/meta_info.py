@@ -21,30 +21,84 @@ import dataclasses
 class MetaInfo:
   """Meta information for test-sets and language pairs."""
   std_ref: str
-  std_gold_sys: str
-  std_gold_doc: str
-  std_gold_seg: str
+  std_gold: dict[str, str]  # Map level to name of human gold scores.
   outlier_systems: set[str]
-  primary_metrics: set[str]  # Includes any baseline metrics.
+  # Base names (not including -reference extensions) of metrics considered to be
+  # primary submissions, or baselines like BLEU. When primary submissions can
+  # include both reference-based and reference-free versions, these must have
+  # distinct basenames, eg MyMetric and MyMetric-QE.
+  primary_metrics: set[str]
 
-WMT19 = MetaInfo('ref', 'wmt-z', '', 'wmt-raw', set(), set())
-WMT20 = MetaInfo('ref', 'wmt-z', 'wmt-raw', 'wmt-raw', set(), set())
+WMT19 = MetaInfo('ref', {'sys': 'wmt-z', 'seg': 'wmt-raw'}, set(), set())
+WMT20 = MetaInfo('ref', {'sys': 'wmt-z', 'doc': 'wmt-raw', 'seg': 'wmt-raw'},
+                 set(), set())
 WMT21_PRIMARIES = {
     'bleurt-20', 'COMET-MQM_2021',
     'COMET-QE-MQM_2021', 'C-SPECpn', 'MEE2',
     'MTEQA', 'OpenKiwi-MQM', 'regEMT', 'YiSi-1',
     'YiSi-2', 'BERTScore', 'sentBLEU', 'BLEU', 'chrF', 'Prism', 'TER'
 }
-WMT21 = MetaInfo('refA', 'wmt-z', '', 'wmt-raw', set(), WMT21_PRIMARIES)
+WMT21 = MetaInfo('refA', {'sys': 'wmt-z', 'seg': 'wmt-raw'}, set(),
+                 WMT21_PRIMARIES)
+
+WMT22_PRIMARIES = {
+    'BERTScore', 'BLEURT-20', 'BLEU', 'chrF', 'COMET-20', 'COMET-22',
+    'COMETKiwi', 'COMET-QE', 'f200spBLEU',
+    'HuaweiTSC_EE_BERTScore_0.3_With_Human', 'HWTSC-Teacher-Sim', 'MATESE-QE',
+    'MATESE', 'MEE4', 'metricx_xxl_MQM_2020', 'MS-COMET-22', 'MS-COMET-QE-22',
+    'REUSE', 'SEScore', 'UniTE', 'UniTE-src', 'YiSi-1'
+}
+WMT22 = MetaInfo(
+    'refA',
+    {'sys': 'mqm', 'domain': 'mqm', 'seg': 'mqm'}, set(),
+    WMT22_PRIMARIES)
+WMT22_DA = MetaInfo(
+    'refA',
+    {'sys': 'wmt', 'domain': 'wmt', 'seg': 'wmt'}, set(),
+    WMT22_PRIMARIES)
+WMT22_DA_NODOMAIN = MetaInfo(
+    'refA',
+    {'sys': 'wmt', 'seg': 'wmt'}, set(),
+    WMT22_PRIMARIES)
+WMT22_APPRAISE = MetaInfo(
+    'refA',
+    {'sys': 'wmt-appraise', 'domain': 'wmt-appraise', 'seg': 'wmt-appraise'},
+    set(), WMT22_PRIMARIES)
+WMT22_NODOMAIN = MetaInfo(
+    'refA',
+    {'sys': 'wmt-appraise', 'seg': 'wmt-appraise'},
+    set(), WMT22_PRIMARIES)
 
 DATA = {
+    'wmt22': {
+        'en-de': dataclasses.replace(WMT22, outlier_systems={'M2M100_1.2B-B4'}),
+        'en-ru': WMT22,
+        'zh-en': WMT22,
+        'cs-en': dataclasses.replace(WMT22_DA, std_ref='refB'),
+        'cs-uk': WMT22_NODOMAIN,
+        'de-en': WMT22_DA,
+        'de-fr': dataclasses.replace(WMT22_APPRAISE, std_gold={}),
+        'en-cs': dataclasses.replace(WMT22_APPRAISE, std_ref='refB'),
+        'en-hr': WMT22_APPRAISE,
+        'en-ja': WMT22_APPRAISE,
+        'en-liv': WMT22_NODOMAIN,
+        'en-uk': WMT22_APPRAISE,
+        'en-zh': WMT22_APPRAISE,
+        'fr-de': dataclasses.replace(WMT22_APPRAISE, std_gold={}),
+        'ja-en': WMT22_DA,
+        'liv-en': WMT22_NODOMAIN,
+        'ru-en': WMT22_DA,
+        'ru-sah': dataclasses.replace(WMT22_APPRAISE, std_gold={}),
+        'sah-ru': WMT22_NODOMAIN,
+        'uk-cs': WMT22_NODOMAIN,
+        'uk-en': WMT22_DA_NODOMAIN,
+    },
     'wmt21.news': {
         'en-cs': WMT21,
         'en-de': dataclasses.replace(
             WMT21,
             std_ref='refC',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'cushLEPOR(LM)'}),
         'en-ha': WMT21,
         'en-is': WMT21,
@@ -52,8 +106,7 @@ DATA = {
         'en-ru': dataclasses.replace(
             WMT21,
             std_ref='refA',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'hLEPOR'}),
         'en-zh': WMT21,
         'cs-en': WMT21,
@@ -67,28 +120,24 @@ DATA = {
         'zh-en': dataclasses.replace(
             WMT21,
             std_ref='refB',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'cushLEPOR(LM)', 'RoBLEURT'}),
     },
     'wmt21.tedtalks': {
         'en-de': dataclasses.replace(
             WMT21,
             std_ref='refA',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'cushLEPOR(LM)'}),
         'en-ru': dataclasses.replace(
             WMT21,
             std_ref='refA',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'hLEPOR'}),
         'zh-en': dataclasses.replace(
             WMT21,
             std_ref='refB',
-            std_gold_sys='mqm',
-            std_gold_seg='mqm',
+            std_gold={'sys': 'mqm', 'seg': 'mqm'},
             primary_metrics=WMT21_PRIMARIES | {'cushLEPOR(LM)', 'RoBLEURT'}),
     },
     'wmt21.flores': {
@@ -170,4 +219,3 @@ DATA = {
         'zh-en': WMT19,
     }
 }
-

@@ -37,24 +37,24 @@ class Correlation:
     self.metric_scores = metric_scores
     self.none_count = gold_scores.count(None)
 
-  def GenCorrFunction(self, corr_fcn, averaged):
+  def GenCorrFunction(self, corr_fcn, averaged, by_system=False):
     """Convenience function to create a correlation functor for these stats."""
     return CorrFunction(corr_fcn, self.num_sys if averaged else 0,
-                        self.none_count)
+                        self.none_count, by_system)
 
-  def Pearson(self, averaged=False):
+  def Pearson(self, averaged=False, by_system=False):
     """Pearson correlation and pvalue, optionally averaged over items."""
-    cf = self.GenCorrFunction(scipy.stats.pearsonr, averaged)
+    cf = self.GenCorrFunction(scipy.stats.pearsonr, averaged, by_system)
     return cf.Corr(self.gold_scores, self.metric_scores)
 
-  def Spearman(self, averaged=False):
+  def Spearman(self, averaged=False, by_system=False):
     """Spearman correlation and pvalue, optionally averaged over items."""
-    cf = self.GenCorrFunction(scipy.stats.spearmanr, averaged)
+    cf = self.GenCorrFunction(scipy.stats.spearmanr, averaged, by_system)
     return cf.Corr(self.gold_scores, self.metric_scores)
 
-  def Kendall(self, averaged=False):
+  def Kendall(self, averaged=False, by_system=False):
     """Kendall correlation and pvalue, optionally averaged over items."""
-    cf = self.GenCorrFunction(scipy.stats.kendalltau, averaged)
+    cf = self.GenCorrFunction(scipy.stats.kendalltau, averaged, by_system)
     return cf.Corr(self.gold_scores, self.metric_scores)
 
   def KendallLike(self, averaged=True, thresh=25):
@@ -170,6 +170,17 @@ class KendallLike:
     num_pairs = concordant + discordant
     corr = (concordant - discordant) / num_pairs if num_pairs else 0
     return corr, num_pairs, concordant, discordant
+
+
+def Agreement(vect1, vect2):
+  """Compute pairwise agreement over two vectors, vect1 assumed to be gold."""
+  agree, num_pairs = 0, 0
+  for a, b in itertools.combinations(zip(vect1, vect2), 2):
+    if a[0] is None or b[0] is None:
+      continue
+    agree += np.sign(a[0] - b[0]) == np.sign(a[1] - b[1])
+    num_pairs += 1
+  return agree, num_pairs
 
 
 def WilliamsSigDiff(corr1, corr2, corr_fcn, one_sided=True):

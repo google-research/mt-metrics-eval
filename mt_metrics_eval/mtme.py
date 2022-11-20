@@ -54,34 +54,33 @@ flags.DEFINE_bool(
     'set and language pair.')
 flags.DEFINE_string(
     'echo', None,
-    'A comma-separated list of text names, any of doc, src, ref, or '
-    'any alternative reference name (see --list). Pastes the '
-    'corresponding texts to STDOUT then quits.')
+    'A comma-separated list of text names, any of "domain", "doc", "src", '
+    '"ref" for the main reference, or an actual reference name for any other '
+    'reference (see --list). Pastes the corresponding tags or text to STDOUT '
+    'then quits.')
 flags.DEFINE_string(
     'echosys', None,
     'Like --echo, but repeats output once for each system, with "sysname txt " '
     'fields prepended.')
 flags.DEFINE_bool(
     'scores', False,
-    'Dump all scores to a tsv file. For each system, write the  following info '
-    'for each segment: system name, doc id, segment-level scores, document-'
-    'level scores (if available), and system-level scores. Gold scores are '
-    'written first, followed by metrics scores. None values are written '
-    'whenever scores aren\'t available for the given level and/or system.')
+    'Dump all scores to a tsv file. For each system, write the following '
+    'fields for each segment: system-name, domain, doc, seg-id, then '
+    'segment-level, doc-level, domain-level, and system-level scores '
+    '(whichever are available). Gold scores are written first, followed by '
+    'metric scores. None values are written whenever scores aren\'t available '
+    'for the given level and/or system.')
 flags.DEFINE_string(
     'test_set', None, 'Test set to use (see --list).', short_name='t')
 flags.DEFINE_string(
-    'language_pair',
-    None,
-    'Source-target language pair (2-char ISO639-1 codes).',
-    short_name='l')
+    'language_pair', None,
+    'Source-target language pair (2-char ISO639-1 codes).', short_name='l')
 flags.DEFINE_string(
     'input',
     None, 'Read input from a file instead of STDIN. Each line should '
     'contain a system name and a score, separated by a tab. '
     'The number of entries per system determines granularity: '
-    'one per system, document, or segment in the test set. Document and '
-    'segment scores must  from all metrics.',
+    'one per system, document, or segment in the test set.',
     short_name='i')
 flags.DEFINE_string(
     'output', None, 'Output file, defaults to STDOUT.', short_name='o')
@@ -97,10 +96,11 @@ flags.DEFINE_string(
     'std', 'Type of gold scores to compare to, use "std" to designate official '
     'gold scores.',
     short_name='g')
-flags.DEFINE_bool(
-    'avg', False,
-    'Use averaged rather than pooled correlations for doc and seg level '
-    'scores.')
+flags.DEFINE_string(
+    'avg', 'none',
+    'Averaging method for segment- or doc-level correlations: "none" to pool '
+    'scores into vectors, "item" to average over correlations of item '
+    'vectors, or "sys" to average over correlations of system vectors.')
 flags.DEFINE_integer(
     'k', 1000, 'Number of resampling runs for PERM-BOTH significance test.')
 flags.DEFINE_float(
@@ -115,6 +115,48 @@ flags.DEFINE_string(
     'Comma-separated list of systems to add to the default set for '
     'correlation, for instance outlier or human output. These scores must be '
     'available in the set selected with -gold.')
+flags.DEFINE_bool(
+    'matrix', False, 'Compute correlations for a set of metrics, and perform '
+    'significance tests on their differences. Writes metrics in descending '
+    'order by correlation, followed by their rank (may include ties), '
+    'correlation, then n significance indictors (x for filler, 1 for sig, 0 '
+    'for non) for comparisons between current metric and all n metrics, in the '
+    'same order as rows. Flags that affect this operation include all '
+    '-matrix_* flags, along with --gold, --avg, --k, and --use_outliers.')
+flags.DEFINE_string(
+    'matrix_level', 'sys', 'Granularity, one of "sys", "doc" or "seg"')
+flags.DEFINE_string(
+    'matrix_domain', None,
+    'Limit matrix correlations to this domain, no limit if None. The string '
+    '"None" is also interpreted as None.')
+flags.DEFINE_string(
+    'matrix_refs', 'std',
+    'Reference(s) to use. Metric variants that use references outside this set '
+    'are excluded, as are human outputs that match any of these references. '
+    'Use "std" to designate the standard reference.')
+flags.DEFINE_string(
+    'matrix_close_refs', '',
+    'Additional reference(s) to always exclude from human outputs when '
+    'matrix_human is True.')
+flags.DEFINE_bool(
+    'matrix_human', False,
+    'Include human outputs in matrix calculation, except for references '
+    'specified in matrix_refs and matrix_close_refs.')
+flags.DEFINE_bool(
+    'matrix_primary', True,
+    'Use only primary metric submissions in the matrix.')
+flags.DEFINE_float(
+    'matrix_pval', 0.05,
+    'p-value to use for assigning significance to metric comparisons.')
+flags.DEFINE_string(
+    'matrix_corr', 'pearson',
+    'Correlation to use for --matrix, one of pearson, spearman, kendall, or '
+    'accuracy. Accuracy is valid only for system-level comparisons. It also '
+    'triggers special interpretation of the --language_pair, --matrix_refs, '
+    'and --matrix_close_refs: language pair can be a comma-separated list, '
+    'with corresponding lists of refs or a single ref that gets applied to '
+    'all languages (it\'s not possible to specify a set of refs / language '
+    'with this option.')
 
 FLAGS = flags.FLAGS
 
@@ -126,54 +168,105 @@ def PrintScores(evs):
   gold_names = sorted(evs.human_score_names)
   metric_names = sorted(evs.metric_names)
 
-  fields = ['system-name', 'doc-id']
-  fields += [f'{g}:seg' for g in gold_names]
-  fields += [f'{m}:seg' for m in metric_names]
-  if evs.StdHumanScoreName('doc'):
-    fields += [f'{g}:doc' for g in gold_names]
-    fields += [f'{m}:doc' for m in metric_names]
-  fields += [f'{g}:sys' for g in gold_names]
-  fields += [f'{m}:sys' for m in metric_names]
-  header = '\t'.join(fields) + '\n'
+  fields = ['system-name', 'domain', 'doc', 'seg-id']
+  for level in 'seg', 'doc', 'domain', 'sys':
+    if level in evs.levels:
+      fields += [f'{g}:{level}' for g in gold_names]
+      fields += [f'{m}:{level}' for m in metric_names]
+    header = '\t'.join(fields) + '\n'
+  docs = evs.DocsPerSeg()
+  domains = evs.DomainsPerSeg()
+  domain_ids = {d: i for i, d in enumerate(evs.domain_names)}
+  doc_ids = {d: i for i, d in enumerate(evs.doc_names)}
 
-  # Map from seg-id -> doc_name
-  docs = [None] * len(evs.src)
-  for doc_name in evs.doc_names:
-    for i in range(*evs.docs[doc_name]):
-      docs[i] = doc_name
-  assert None not in docs
-
-  def _Score(level, scorer, sysname, doc_id, seg_id):
+  def _Score(level, scorer, sysname, ind):
     scores = evs.Scores(level, scorer)
     if scores is None or sysname not in scores:
       return 'None'
-    if level == 'seg':
-      return f'{scores[sysname][seg_id]}'
-    elif level == 'doc':
-      return f'{scores[sysname][doc_id]}'
-    elif level == 'sys':
-      return f'{scores[sysname][0]}'
     else:
-      assert False
+      return f'{scores[sysname][ind]}'
 
   fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
   with fh:
     fh.write(header)
     for n in sys_names:
       for i in range(len(evs.src)):
-        doc_name = docs[i]
-        doc_beg, doc_end = evs.docs[doc_name]
-        doc_pos = i - doc_beg
-        assert doc_pos >= 0 and doc_pos < doc_end - doc_beg
-        fields = [n, doc_name]
-        fields += [_Score('seg', g, n, doc_pos, i) for g in gold_names]
-        fields += [_Score('seg', m, n, doc_pos, i) for m in metric_names]
-        if evs.StdHumanScoreName('doc'):
-          fields += [_Score('doc', g, n, doc_pos, i) for g in gold_names]
-          fields += [_Score('doc', m, n, doc_pos, i) for m in metric_names]
-        fields += [_Score('sys', g, n, doc_pos, i) for g in gold_names]
-        fields += [_Score('sys', m, n, doc_pos, i) for m in metric_names]
+        doc, domain = docs[i], domains[i]
+        doc_id, domain_id = doc_ids[doc], domain_ids[domain]
+        fields = [n, domain, doc, f'{i + 1}']
+        for level in 'seg', 'doc', 'domain', 'sys':
+          if level not in evs.levels:
+            continue
+          ind = {'seg': i, 'doc': doc_id, 'domain': domain_id, 'sys': 0}[level]
+          fields += [_Score(level, g, n, ind) for g in gold_names]
+          fields += [_Score(level, m, n, ind) for m in metric_names]
         fh.write('\t'.join(fields) + '\n')
+
+
+def GetRefSets(evs_list, name, refs_flag_val):
+  """Get singleton sets of references to match given evs_list."""
+  num_needed = len(evs_list)
+  if not refs_flag_val:
+    return [set()] * num_needed
+  vals = refs_flag_val.split(',')
+  if len(vals) == 1:
+    vals = vals * num_needed
+  elif len(vals) != num_needed:
+    raise ValueError(
+        f'Wrong number of references for {name} - expecting 1 or {num_needed}')
+  return [{evs.std_ref} if v == 'std' else set(v)
+          for evs, v in zip(evs_list, vals)]
+
+
+def PrintMatrix():
+  """Print ranks, correlations, and comparison matrix for a set of metrics."""
+
+  domain = None if FLAGS.matrix_domain == 'None' else FLAGS.matrix_domain
+
+  if FLAGS.matrix_corr == 'accuracy':
+    evs_list = [data.EvalSet(FLAGS.test_set, lp, True)
+                for lp in FLAGS.language_pair.split(',')]
+    refs = GetRefSets(evs_list, 'matrix_refs', FLAGS.matrix_refs)
+    close_refs = GetRefSets(evs_list, 'close_refs', FLAGS.matrix_close_refs)
+    results = data.CompareMetricsWithGlobalAccuracy(
+        evs_list, refs, close_refs, FLAGS.matrix_human, FLAGS.use_outliers,
+        FLAGS.gold, FLAGS.matrix_primary, domain, FLAGS.k, FLAGS.matrix_pval)
+  else:
+    evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair, True)
+    refs = FLAGS.matrix_refs
+    refs = {evs.std_ref} if refs == 'std' else set(refs.split(','))
+    close_refs = set()
+    if FLAGS.matrix_close_refs:
+      close_refs = set(FLAGS.close_refs.split(','))
+    corr_fcn = {
+        'pearson': scipy.stats.pearsonr,
+        'spearman': scipy.stats.spearmanr,
+        'kendall': scipy.stats.kendalltau,
+    }[FLAGS.matrix_corr]
+    corrs = data.GetCorrelations(
+        evs, FLAGS.matrix_level, main_refs=refs, close_refs=close_refs,
+        include_human=FLAGS.matrix_human, include_outliers=FLAGS.use_outliers,
+        gold_name=FLAGS.gold, primary_metrics=FLAGS.matrix_primary,
+        domain=domain)
+    metrics, sig_matrix = data.CompareMetrics(
+        corrs, corr_fcn, FLAGS.avg, FLAGS.k, FLAGS.matrix_pval)
+    # Make compatible with accuracy results.
+    results = ({evs.DisplayName(m): v for m, v in metrics.items()},
+               sig_matrix)
+
+  task = data.MakeTaskName(
+      FLAGS.test_set, FLAGS.language_pair, domain, FLAGS.matrix_level,
+      FLAGS.matrix_human, FLAGS.avg, FLAGS.matrix_corr, FLAGS.k, FLAGS.gold,
+      refs, close_refs, FLAGS.use_outliers, FLAGS.matrix_primary,
+      FLAGS.matrix_pval)
+  fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
+  with fh:
+    fh.write(task + '\n')
+    metrics, sig_matrix = results
+    for i, (m, (corr, rank)) in enumerate(metrics.items()):
+      sigs = ['1' if p < 0.05 else '0' for p in sig_matrix[i]]
+      sigs = ['x'] * (i + 1) + sigs[i + 1:]
+      fh.write(f'{m} {rank} {corr:f} {" ".join(sigs)}\n')
 
 
 def PrintCorrelation(evs, scorefile, tag, outfile):
@@ -207,10 +300,11 @@ def PrintCorrelation(evs, scorefile, tag, outfile):
       raise ValueError(f'No {gold_name} scores for system {n}')
     sys_names.add(n)
 
+  avg = 'none' if level == 'sys' else FLAGS.avg
   corr = evs.Correlation(gold_scores, scores, sys_names)
-  pearson = corr.Pearson(FLAGS.avg)
-  spearman = corr.Spearman(FLAGS.avg)
-  kendall = corr.Kendall(FLAGS.avg)
+  pearson = corr.Pearson(avg != 'none', avg == 'sys')
+  spearman = corr.Spearman(avg != 'none', avg == 'sys')
+  kendall = corr.Kendall(avg != 'none', avg == 'sys')
   # Always average KendallLike, otherwise it's very slow.
   if FLAGS.thresh == -1:
     FLAGS.thresh = 25 if gold_name == 'wmt-raw' else 0
@@ -303,6 +397,10 @@ def main(argv):
   if FLAGS.language_pair is None:
     raise ValueError('No language_pair specified.')
 
+  if FLAGS.matrix:
+    PrintMatrix()
+    return
+
   evs = data.EvalSet(
       FLAGS.test_set, FLAGS.language_pair,
       read_stored_metric_scores=FLAGS.scores)
@@ -318,10 +416,11 @@ def main(argv):
       if col == 'src':
         texts.append(evs.src)
       elif col == 'doc':
-        docnames = []
-        for d, (b, e) in evs.docs.items():
-          docnames += [d] * (e - b)
-        texts.append(docnames)
+        texts.append(evs.DocsPerSeg())
+      elif col == 'domain':
+        texts.append(evs.DomainsPerSeg())
+      elif col == 'ref':
+        texts.append(evs.all_refs[evs.std_ref])
       elif col in evs.all_refs:
         texts.append(evs.all_refs[col])
       else:

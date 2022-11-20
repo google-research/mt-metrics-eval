@@ -304,6 +304,20 @@ class DataTest(unittest.TestCase):
         0, 0, 0, 0]).reshape((4, 4))
     self.assertEqual(data.AssignRanks(sig_matrix, 0.5), [1, 2, 2, 3])
 
+  def testMapPositions(self):
+    items = ['aa', 'aa', 'bb', 'bb', 'bb', 'aa']
+    d = data._MapPositions(items)
+    self.assertEqual(d['aa'], [[0, 2], [5, 6]])
+    self.assertEqual(d['bb'], [[2, 5]])
+    self.assertEqual(data._UnmapPositions(d), items)
+
+    items = ['aa', 'aa', 'bb', 'cc', 'cc', 'cc']
+    d = data._MapPositions(items, True)
+    self.assertEqual(d['aa'], [0, 2])
+    self.assertEqual(d['bb'], [2, 3])
+    self.assertEqual(d['cc'], [3, 6])
+    self.assertEqual(data._UnmapPositions(d, True), items)
+
 
 if __name__ == '__main__':
   unittest.main()
