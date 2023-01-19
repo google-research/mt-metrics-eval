@@ -19,7 +19,7 @@ import copy
 import itertools
 import os
 import tarfile
-from typing import Any, Callable, Dict, Iterable, List, Sequence, Set
+from typing import Any, Callable, Dict, Iterable, List, Sequence, Set, Tuple
 import urllib.request
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
@@ -521,11 +521,11 @@ def Download():
     tar.extractall(path)
 
 
-def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
-                    close_refs: set[str], include_human: bool,
+def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
+                    close_refs: Set[str], include_human: bool,
                     include_outliers: bool, gold_name: str,
                     primary_metrics: bool, domain: str = None,
-                    ) -> dict[str, stats.Correlation]:
+                    ) -> Dict[str, stats.Correlation]:
   """Convenience function to generate sufficient stats for given parameters.
 
   Args:
@@ -604,10 +604,10 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
 
 
 def CompareMetrics(
-    metric_corrs: dict[str, stats.Correlation],
-    corr_fcn: Callable[[list[float], list[float]], tuple[float, float]],
+    metric_corrs: Dict[str, stats.Correlation],
+    corr_fcn: Callable[[List[float], List[float]], Tuple[float, float]],
     average_by: str = 'none', k: int = 1000, pval: float = 0.05,
-    ) -> tuple[dict[str, tuple[float, float]], Any]:
+    ) -> Tuple[Dict[str, Tuple[float, float]], Any]:
   """Compare a set of metrics using a given correlation function.
 
   This function uses a permutation test to compute significant differences
@@ -674,11 +674,11 @@ def CompareMetrics(
 
 
 def CompareMetricsWithGlobalAccuracy(
-    evs_list: list[EvalSet], main_refs_list: list[set[str]],
-    close_refs_list: list[set[str]], include_human: bool,
+    evs_list: List[EvalSet], main_refs_list: List[Set[str]],
+    close_refs_list: List[Set[str]], include_human: bool,
     include_outliers: bool, gold_name: str, primary_metrics: bool,
     domain: str = None, k: int = 1000, pval: float = 0.05
-    )-> tuple[dict[str, tuple[float, float]], Any]:
+    )-> Tuple[Dict[str, Tuple[float, float]], Any]:
   """Compare a set of metrics using accuracy.
 
   This is a special case of CompareMetrics that uses pairwise accuracy
