@@ -38,7 +38,7 @@ class EvalSet:
                lp: str,
                read_stored_metric_scores: bool = False,
                info: meta_info.MetaInfo = None,
-               path: str = None,
+               path = None,
                strict: bool = False):
     """Load data for a given test set and language pair.
 
@@ -57,7 +57,8 @@ class EvalSet:
       info: Optional meta info for this set.
       path: Optional path to parent directory: path/name should contain data
         structured as described under 'File organization and naming convention'
-        in the README.
+        in the README. You may use multiple paths in a form of a list. 
+        In this case, the first path must contain the data for the testsets.
       strict: If False, score files that are missing all entries for some
         systems will be 'repaired' by silently adding 0 scores for those systems
         instead of raising an exception.
@@ -355,10 +356,16 @@ class EvalSet:
   def _ReadDataset(self, name, lp, read_stored_metric_scores, path, strict):
     """Read data for given name and language pair."""
 
-    if not path:
+    if path is None:
       path = LocalDir(root_only=False)
       if not os.path.exists(path):
         raise ValueError('%s not found. Run mtme --download.' % path)
+      
+    if isinstance(path, list):
+      metric_scores_paths = path
+      path = path[0]  # Use first path for dataset resource files.
+    else:
+      metric_scores_paths = [path]
 
     d = os.path.join(path, name)
     doc_lines = _ReadTextFile(os.path.join(d, 'documents', '%s.docs' % lp))
@@ -369,6 +376,7 @@ class EvalSet:
     self._src = _ReadTextFile(os.path.join(d, 'sources', '%s.txt' % lp))
 
     self._all_refs = {}
+
     for filename in glob.glob(os.path.join(d, 'references', '%s.*.txt' % lp)):
       refname = filename.split('.')[-2]
       if '-' in refname or refname in ['all', 'src']:
@@ -402,20 +410,22 @@ class EvalSet:
     self._metric_names = set()
     self._metric_basenames = set()
     if read_stored_metric_scores:
-      for filename in glob.glob(
-          os.path.join(d, 'metric-scores', lp, '*.score')):
-        scorer, level = self.ParseMetricFilename(filename)
-        if level not in self._scores:
-          self._scores[level] = {}
-        assert scorer not in self._scores[level]
-        assert self.ReferencesUsed(scorer).issubset(self.ref_names)
-        self._metric_names.add(scorer)
-        self._metric_basenames.add(self.BaseMetric(scorer))
-        if level == 'domain':
-          self._scores[level][scorer] = ReadDomainScoreFile(
-              filename, self.domain_names)
-        else:
-          self._scores[level][scorer] = ReadScoreFile(filename)
+      for md in metric_scores_paths:
+        md = os.path.join(md, name)
+        for filename in glob.glob(
+            os.path.join(md, 'metric-scores', lp, '*.score')):
+          scorer, level = self.ParseMetricFilename(filename)
+          if level not in self._scores:
+            self._scores[level] = {}
+          assert scorer not in self._scores[level]
+          assert self.ReferencesUsed(scorer).issubset(self.ref_names)
+          self._metric_names.add(scorer)
+          self._metric_basenames.add(self.BaseMetric(scorer))
+          if level == 'domain':
+            self._scores[level][scorer] = ReadDomainScoreFile(
+                filename, self.domain_names)
+          else:
+            self._scores[level][scorer] = ReadScoreFile(filename)
 
     # Check contents
     for txt in self.all_refs.values():
