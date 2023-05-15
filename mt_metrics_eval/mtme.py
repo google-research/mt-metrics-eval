@@ -18,6 +18,9 @@ List info, print text, score metrics, compare metrics.
 
 Examples (omitting path to binary):
 
+# Get latest version of database (slow).
+mtme --download
+
 # Info about test sets:
 mtme --list  # all available sets
 mtme --list -t wmt20  # language pairs for wmt20
@@ -26,14 +29,23 @@ mtme --list -t wmt20 -l en-de  # details for wmt20/en-de
 # Generate all system outputs, pasted with doc-ids, source, and reference:
 mtme -t wmt20 -l en-de --echosys doc,src,ref
 
-# Score a metric in a file containing 'system-name score' entries:
-mtme -t wmt20 -l en-de < my-metric.score
+# Correlations for sys- and seg-level scores (using example files from the
+# database):
+MTME20=$HOME/.mt-metrics-eval/mt-metrics-eval-v2/wmt20/metric-scores
+mtme -t wmt20 -l en-de < $MTME20/en-de/COMET-ref.sys.score
+mtme -t wmt20 -l en-de < $MTME20/en-de/COMET-ref.seg.score
 
-# Scoring using alternative gold scores, with outlier systems included:
-mtme -t wmt20 -l en-de -g mqm --use_outliers < my-metric.score
+# Correlations with alternative gold scores, outlier systems included:
+mtme -t wmt20 -l en-de -g mqm --use_outliers < $MTME20/en-de/COMET-ref.sys.score
 
 # Compare two metrics, testing whether correlations are significantly different:
-mtme -t wmt20 -l en-de -g mqm --use_outliers -i metric1.score -c metric2.score
+METRIC1=$MTME20/en-de/COMET-ref.sys.score
+METRIC2=$MTME20/en-de/BLEU-ref.sys.score
+mtme -t wmt20 -l en-de -g mqm -i $METRIC1 -c $METRIC2
+
+# Compare all metrics under specified conditions, writing ranks, correlations,
+# and matrix of pair-wise significance values (using small k for demo).
+mtme -t wmt20 -l en-de -g mqm --k 100
 """
 
 import sys
@@ -101,8 +113,23 @@ flags.DEFINE_string(
     'Averaging method for segment- or doc-level correlations: "none" to pool '
     'scores into vectors, "item" to average over correlations of item '
     'vectors, or "sys" to average over correlations of system vectors.')
+flags.DEFINE_bool(
+    'replace_nans_with_zeros', False,
+    'Replace NaNs with 0 instead of discarding them. This will penalize '
+    'metrics that produce NaN values because they assign all items the same '
+    'score.')
 flags.DEFINE_integer(
     'k', 1000, 'Number of resampling runs for PERM-BOTH significance test.')
+flags.DEFINE_integer(
+    'k_block', 1000,
+    'Size of blocks for early stopping checks with PERM-BOTH test. Set to >= k '
+    'for no early stopping.')
+flags.DEFINE_float(
+    'early_min', 0.02,
+    'Early stop PERM-BOTH if pval < early_min at current block boundary.')
+flags.DEFINE_float(
+    'early_max', 0.50,
+    'Early stop PERM-BOTH if pval > early_max at current block boundary.')
 flags.DEFINE_float(
     'thresh', -1, 'Threshold for WMT Kendall-like correlation. Defaults to 25 '
     'if gold scores are WMT raw, otherwise 0.')
@@ -122,7 +149,8 @@ flags.DEFINE_bool(
     'correlation, then n significance indictors (x for filler, 1 for sig, 0 '
     'for non) for comparisons between current metric and all n metrics, in the '
     'same order as rows. Flags that affect this operation include all '
-    '-matrix_* flags, along with --gold, --avg, --k, and --use_outliers.')
+    '--matrix_* flags, along with --gold, --avg, --k, --k_block, --early_min, '
+    '--early_max, --replace_nans_with_zeros, and --use_outliers.')
 flags.DEFINE_string(
     'matrix_level', 'sys', 'Granularity, one of "sys", "doc" or "seg"')
 flags.DEFINE_string(
@@ -230,7 +258,10 @@ def PrintMatrix():
     close_refs = GetRefSets(evs_list, 'close_refs', FLAGS.matrix_close_refs)
     results = data.CompareMetricsWithGlobalAccuracy(
         evs_list, refs, close_refs, FLAGS.matrix_human, FLAGS.use_outliers,
-        FLAGS.gold, FLAGS.matrix_primary, domain, FLAGS.k, FLAGS.matrix_pval)
+        FLAGS.gold, FLAGS.matrix_primary, domain, FLAGS.k, FLAGS.matrix_pval,
+        block_size=FLAGS.k_block, early_min=FLAGS.early_min,
+        early_max=FLAGS.early_max,
+        replace_nans_with_zeros=FLAGS.replace_nans_with_zeros)
   else:
     evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair, True)
     refs = FLAGS.matrix_refs
@@ -249,7 +280,10 @@ def PrintMatrix():
         gold_name=FLAGS.gold, primary_metrics=FLAGS.matrix_primary,
         domain=domain)
     metrics, sig_matrix = data.CompareMetrics(
-        corrs, corr_fcn, FLAGS.avg, FLAGS.k, FLAGS.matrix_pval)
+        corrs, corr_fcn, FLAGS.avg, FLAGS.k, FLAGS.matrix_pval,
+        block_size=FLAGS.k_block, early_min=FLAGS.early_min,
+        early_max=FLAGS.early_max,
+        replace_nans_with_zeros=FLAGS.replace_nans_with_zeros)
     # Make compatible with accuracy results.
     results = ({evs.DisplayName(m): v for m, v in metrics.items()},
                sig_matrix)
@@ -258,7 +292,8 @@ def PrintMatrix():
       FLAGS.test_set, FLAGS.language_pair, domain, FLAGS.matrix_level,
       FLAGS.matrix_human, FLAGS.avg, FLAGS.matrix_corr, FLAGS.k, FLAGS.gold,
       refs, close_refs, FLAGS.use_outliers, FLAGS.matrix_primary,
-      FLAGS.matrix_pval)
+      FLAGS.matrix_pval, FLAGS.k_block, FLAGS.early_min, FLAGS.early_max,
+      FLAGS.replace_nans_with_zeros)
   fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
   with fh:
     fh.write(task + '\n')
@@ -302,21 +337,30 @@ def PrintCorrelation(evs, scorefile, tag, outfile):
 
   avg = 'none' if level == 'sys' else FLAGS.avg
   corr = evs.Correlation(gold_scores, scores, sys_names)
-  pearson = corr.Pearson(avg != 'none', avg == 'sys')
-  spearman = corr.Spearman(avg != 'none', avg == 'sys')
-  kendall = corr.Kendall(avg != 'none', avg == 'sys')
+  pearson = corr.Pearson(
+      avg != 'none', avg == 'sys', FLAGS.replace_nans_with_zeros)
+  spearman = corr.Spearman(
+      avg != 'none', avg == 'sys', FLAGS.replace_nans_with_zeros)
+  kendall = corr.Kendall(
+      avg != 'none', avg == 'sys', FLAGS.replace_nans_with_zeros)
   # Always average KendallLike, otherwise it's very slow.
   if FLAGS.thresh == -1:
     FLAGS.thresh = 25 if gold_name == 'wmt-raw' else 0
   kendall_like = corr.KendallLike(averaged=True, thresh=FLAGS.thresh)
 
-  corr_type = 'averaging' if FLAGS.avg else 'pooling'
+  if avg == 'none':
+    cmp = 'flattened'
+  elif avg == 'sys':
+    cmp = 'rows in'
+  else:
+    cmp = 'columns in'
+
   print(
       f'{tag}{FLAGS.test_set} {FLAGS.language_pair} {level}-level: '
       f'scoring {corr.num_sys}/{len(evs.sys_names)} systems, '
       f'gold={gold_name}, '
-      f'{corr_type} {corr.num_items}x{corr.num_sys} scores '
-      f'({corr.none_count} None): '
+      f'comparing {cmp} {corr.num_sys}x{corr.num_items} matrices '
+      f'({corr.none_count} None vals): '
       f'Pearson={pearson[0]:0.3f},p{pearson[1]:0.3f} '
       f'Spearman={spearman[0]:0.3f},p{spearman[1]:0.3f} '
       f'Kendall={kendall[0]:0.3f},p{kendall[1]:0.3f} '
@@ -333,24 +377,34 @@ def PrintComparison(res_base, res_comp, outfile):
   if corr1.num_items != corr2.num_items:
     raise ValueError('Can\'t compare score files at different granularities.')
 
-  pearson = corr1.GenCorrFunction(scipy.stats.pearsonr, FLAGS.avg)
-  spearman = corr1.GenCorrFunction(scipy.stats.spearmanr, FLAGS.avg)
-  kendall = corr1.GenCorrFunction(scipy.stats.kendalltau, FLAGS.avg)
+  pearson = corr1.GenCorrFunction(
+      scipy.stats.pearsonr, FLAGS.avg, FLAGS.replace_nans_with_zeros)
+  spearman = corr1.GenCorrFunction(
+      scipy.stats.spearmanr, FLAGS.avg, FLAGS.replace_nans_with_zeros)
+  kendall = corr1.GenCorrFunction(
+      scipy.stats.kendalltau, FLAGS.avg, FLAGS.replace_nans_with_zeros)
   # Always average KendallLike, otherwise it's very slow.
   kendlike = stats.KendallLike(corr1.num_sys, FLAGS.thresh)
 
-  def _SigTest(corr1, corr2, v1, v2, corr_fcn):
+  def _SigTest(corr1, corr2, v1, v2, corr_wrapper, corr_fcn):
     better = v2[0] >= v1[0]
     if not better:
       corr2, corr1 = corr1, corr2
-    w = stats.WilliamsSigDiff(corr1, corr2, corr_fcn)
-    p = stats.PermutationSigDiff(corr1, corr2, corr_fcn, FLAGS.k)
+    w = stats.WilliamsSigDiff(corr1, corr2, corr_wrapper)
+    p, _, _ = stats.PermutationSigDiff(
+        corr1, corr2, corr_fcn, FLAGS.avg, FLAGS.k, FLAGS.k_block,
+        FLAGS.early_min, FLAGS.early_max, FLAGS.replace_nans_with_zeros)
     return better, w, p
 
-  pear_b, pear_w, pear_p = _SigTest(corr1, corr2, pears1, pears2, pearson)
-  sper_b, sper_w, sper_p = _SigTest(corr1, corr2, spear1, spear2, spearman)
-  kend_b, kend_w, kend_p = _SigTest(corr1, corr2, kend1, kend2, kendall)
-  kl_b, kl_w, kl_p = _SigTest(corr1, corr2, kendlike1, kendlike2, kendlike)
+  pear_b, pear_w, pear_p = _SigTest(
+      corr1, corr2, pears1, pears2, pearson, scipy.stats.pearsonr)
+  sper_b, sper_w, sper_p = _SigTest(
+      corr1, corr2, spear1, spear2, spearman, scipy.stats.spearmanr)
+  kend_b, kend_w, kend_p = _SigTest(
+      corr1, corr2, kend1, kend2, kendall, scipy.stats.kendalltau)
+  kendlike_fcn = stats.KendallLike(0, FLAGS.thresh)
+  kl_b, kl_w, kl_p = _SigTest(
+      corr1, corr2, kendlike1, kendlike2, kendlike, kendlike_fcn)
 
   def _Summary(better, sig_williams, sig_perm):
     s = '2>1,' if better else '1>2,'

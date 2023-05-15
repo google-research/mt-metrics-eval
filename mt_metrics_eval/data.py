@@ -19,7 +19,7 @@ import copy
 import itertools
 import os
 import tarfile
-from typing import Any, Callable, Dict, Iterable, List, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
 import urllib.request
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
@@ -38,7 +38,7 @@ class EvalSet:
                lp: str,
                read_stored_metric_scores: bool = False,
                info: meta_info.MetaInfo = None,
-               path = None,
+               path: str = None,
                strict: bool = False):
     """Load data for a given test set and language pair.
 
@@ -57,7 +57,7 @@ class EvalSet:
       info: Optional meta info for this set.
       path: Optional path to parent directory: path/name should contain data
         structured as described under 'File organization and naming convention'
-        in the README. You may use multiple paths in a form of a list. 
+        in the README. You may use multiple paths in a form of a list.
         In this case, the first path must contain the data for the testsets.
       strict: If False, score files that are missing all entries for some
         systems will be 'repaired' by silently adding 0 scores for those systems
@@ -360,7 +360,7 @@ class EvalSet:
       path = LocalDir(root_only=False)
       if not os.path.exists(path):
         raise ValueError('%s not found. Run mtme --download.' % path)
-      
+
     if isinstance(path, list):
       metric_scores_paths = path
       path = path[0]  # Use first path for dataset resource files.
@@ -376,7 +376,6 @@ class EvalSet:
     self._src = _ReadTextFile(os.path.join(d, 'sources', '%s.txt' % lp))
 
     self._all_refs = {}
-
     for filename in glob.glob(os.path.join(d, 'references', '%s.*.txt' % lp)):
       refname = filename.split('.')[-2]
       if '-' in refname or refname in ['all', 'src']:
@@ -535,8 +534,13 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
                     close_refs: Set[str], include_human: bool,
                     include_outliers: bool, gold_name: str,
                     primary_metrics: bool, domain: str = None,
+                    extern_metrics: Dict[str, Dict[str, List[float]]] = None,
                     ) -> Dict[str, stats.Correlation]:
   """Convenience function to generate sufficient stats for given parameters.
+
+  Note that this doesn't actually compute correlations, it only extracts the
+  vectors over which correlations can later be computed, for a desired set of
+  metrics.
 
   Args:
     evs: EvalSet to use.
@@ -558,6 +562,9 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
     domain: If not None, must be a value in evs.domain_names; this indicates
       that only the scores pertaining to that domain should be used. In this
       case, if level is 'sys', it is treated as if it were 'domain'.
+    extern_metrics: A dict containing metrics not in evs. Each entry should
+      map a correctly-formatted metric name to a dict containing scores for
+      all systems, at the correct granularity.
 
   Returns:
     Map from metric names to Correlation objects from which correlation and
@@ -600,7 +607,8 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
   correlations = {}  # metric -> Correlation
   for metric_name in evs.metric_names:
     base_name, metric_refs = evs.ParseMetricName(metric_name)
-    if primary_metrics and base_name not in evs.primary_metrics:
+    if (primary_metrics and evs.primary_metrics and
+        base_name not in evs.primary_metrics):
       continue
     if not metric_refs.issubset(main_refs):
       continue
@@ -610,19 +618,30 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
     correlations[metric_name] = evs.Correlation(
         gold_scores, _Filter(metric_scores), sys_names)
 
+    # Add in extra metrics.
+    if extern_metrics is not None:
+      for metric_name, scores in extern_metrics.items():
+        correlations[metric_name] = evs.Correlation(
+            gold_scores, _Filter(scores), sys_names)
+
   return correlations
 
 
 def CompareMetrics(
     metric_corrs: Dict[str, stats.Correlation],
     corr_fcn: Callable[[List[float], List[float]], Tuple[float, float]],
-    average_by: str = 'none', k: int = 1000, pval: float = 0.05,
-    ) -> Tuple[Dict[str, Tuple[float, float]], Any]:
+    average_by: str = 'none',
+    k: int = 1000,
+    pval: float = 0.05,
+    replace_nans_with_zeros: bool = False,
+    **kwargs,
+    ) -> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using a given correlation function.
 
   This function uses a permutation test to compute significant differences
   between correlations; it can be very slow when correlation vectors are large,
-  especially when averaging is used.
+  especially when averaging is used. Set k=0 to speed it up if you only want to
+  rank metrics without performing pairwise significance tests.
 
   Args:
     metric_corrs: Map from metric names to stats.Correlation objects containing
@@ -646,6 +665,11 @@ def CompareMetrics(
       test is performed, and only the raw ranks of metrics are returned, along
       with an empty significance matrix.
     pval: p-value for determining significant differences in ranks.
+    replace_nans_with_zeros: If True, replace NaN correlation values with 0.
+      If False, remove these values from the computation. The former setting
+      will penalize metrics that produce NaN values because they assign all
+      items the same score.
+    **kwargs: Additional arguments for PermutationSigDiff.
 
   Returns:
     1. Mapping from metric name to (correlation, rank) pairs, where rank is
@@ -665,7 +689,8 @@ def CompareMetrics(
       corr_fcn,
       num_sys=0 if average_by == 'none' else first_corr.num_sys,
       filter_nones=first_corr.none_count,
-      by_system=average_by == 'sys')
+      by_system=average_by == 'sys',
+      replace_nans_with_zeros=replace_nans_with_zeros)
 
   # Compute metric correlations, ordered by decreasing correlation.
   corrs_and_ranks = {}
@@ -675,7 +700,9 @@ def CompareMetrics(
       sorted(corrs_and_ranks.items(), key=lambda x: -x[1][0]))
 
   # Compute significance matrix and determine ranks.
-  sig_matrix = ComputeSigMatrix(metric_corrs, corrs_and_ranks, corr_wrapper, k)
+  sig_matrix = ComputeSigMatrix(
+      metric_corrs, corrs_and_ranks, corr_fcn, average_by, k,
+      replace_nans_with_zeros=replace_nans_with_zeros, **kwargs)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -684,11 +711,19 @@ def CompareMetrics(
 
 
 def CompareMetricsWithGlobalAccuracy(
-    evs_list: List[EvalSet], main_refs_list: List[Set[str]],
-    close_refs_list: List[Set[str]], include_human: bool,
-    include_outliers: bool, gold_name: str, primary_metrics: bool,
-    domain: str = None, k: int = 1000, pval: float = 0.05
-    )-> Tuple[Dict[str, Tuple[float, float]], Any]:
+    evs_list: List[EvalSet],
+    main_refs_list: List[Set[str]],
+    close_refs_list: List[Set[str]],
+    include_human: bool,
+    include_outliers: bool,
+    gold_name: str,
+    primary_metrics: bool,
+    domain: str = None,
+    k: int = 1000,
+    pval: float = 0.05,
+    extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
+    **kwargs,
+    )-> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using accuracy.
 
   This is a special case of CompareMetrics that uses pairwise accuracy
@@ -715,17 +750,24 @@ def CompareMetricsWithGlobalAccuracy(
       test is performed, and only the raw ranks of metrics are returned, along
       with an empty significance matrix.
     pval: p-value for determining significant differences in ranks.
+    extern_metrics_list: List of dicts containing external_metrics, one per
+      evalsetin evs_list. Each dict should map metric names to dicts containing
+      scores for all systems, at system-level granularity (ie, scores are
+      single-element lists).
+    **kwargs: Additional arguments for PermutationSigDiff.
 
   Returns:
     Tuple of (metric->(corr,rank), significance matrix). This is in the same
       format as CompareMetrics, except that metrics are DisplayName versions.
   """
   corrs, base_metrics = [], []
-  for evs, main_refs, close_refs in zip(
-      evs_list, main_refs_list, close_refs_list):
+  if extern_metrics_list is None:
+    extern_metrics_list = [None] * len(evs_list)
+  for evs, main_refs, close_refs, extern_metrics in zip(
+      evs_list, main_refs_list, close_refs_list, extern_metrics_list):
     corrs.append(GetCorrelations(
         evs, 'sys', main_refs, close_refs, include_human, include_outliers,
-        gold_name, primary_metrics, domain))
+        gold_name, primary_metrics, domain, extern_metrics))
     base_metrics.append({evs.DisplayName(m): m for m in corrs[-1]})
 
   # Merge correlations across eval-sets, recording number of systems for each.
@@ -760,7 +802,8 @@ def CompareMetricsWithGlobalAccuracy(
       sorted(corrs_and_ranks.items(), key=lambda x: -x[1][0]))
 
   # Compute significance matrix and determine ranks.
-  sig_matrix = ComputeSigMatrix(merged_corrs, corrs_and_ranks, _Accuracy, k)
+  sig_matrix = ComputeSigMatrix(
+      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, **kwargs)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -768,17 +811,26 @@ def CompareMetricsWithGlobalAccuracy(
   return corrs_and_ranks, sig_matrix
 
 
-def ComputeSigMatrix(metric_corrs, corrs_and_ranks, corr_wrapper, k):
-  """Compute (top half of) significance matrix."""
+def ComputeSigMatrix(
+    metric_corrs: Dict[str, stats.Correlation],
+    corrs_and_ranks: Dict[str, tuple[float, int]],
+    corr_fcn: Callable[[List[float], List[float]], Tuple[float, float]],
+    average_by: str,
+    k: int,
+    **kwargs,
+) -> np.ndarray:
+  """Populate significance matrix using PermutationSigDiff with given args."""
   n = len(corrs_and_ranks)
   sig_matrix = np.zeros((n, n))
-  if k:
-    for i in range(n):
-      m1 = list(corrs_and_ranks)[i]
-      for j in range(i + 1, n):
-        m2 = list(corrs_and_ranks)[j]
-        sig_matrix[i, j] = stats.PermutationSigDiff(
-            metric_corrs[m2], metric_corrs[m1], corr_wrapper, k)
+  if not k:
+    return sig_matrix
+  for i in range(n):
+    m1 = list(corrs_and_ranks)[i]
+    for j in range(i + 1, n):
+      m2 = list(corrs_and_ranks)[j]
+      pval, _, _ = stats.PermutationSigDiff(
+          metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k, **kwargs)
+      sig_matrix[i, j] = pval
   return sig_matrix
 
 
@@ -813,9 +865,10 @@ def AssignRanks(sig_matrix, pval):
 
 def MakeTaskName(  # pylint: disable=unused-argument
     test_set, lang, domain, level, human, avg_by, corr, k, gold, refs,
-    close_refs=None, use_outliers=False, primary=True, pval=0.05):
+    close_refs=None, use_outliers=False, primary=True, pval=0.05,
+    block_size=1000, early_min=0.02, early_max=0.50,
+    replace_nans_with_zeros=False):
   """Make a task name from a set of values assigned to attributes."""
   # Named parameters are just to standardize order.
   vals = [f'{v}'.replace(' ', '') for v in locals().values()]
   return ' '.join(f'{k}={v}' for k, v in zip(locals(), vals))
-

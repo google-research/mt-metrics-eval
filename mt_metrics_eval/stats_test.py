@@ -87,6 +87,15 @@ class CorrelationTest(unittest.TestCase):
     self.assertAlmostEqual(c12[0], (p1[0] + p2[0]) / 2, places=3)
     self.assertAlmostEqual(c12[1], (p1[1] + p2[1]) / 2, places=3)
 
+    # Handling NaNs
+    v1, v2 = [1, 2, 3, 4, 5, 6], [2, 2, 2, 4, 5, 6]
+    cf = stats.CorrFunction(scipy.stats.pearsonr, num_sys=2, by_system=True,
+                            replace_nans_with_zeros=False)
+    self.assertAlmostEqual(cf(v1, v2)[0], 1.0)
+    cf = stats.CorrFunction(scipy.stats.pearsonr, num_sys=2, by_system=True,
+                            replace_nans_with_zeros=True)
+    self.assertAlmostEqual(cf(v1, v2)[0], 0.5)
+
   def testKendallLike(self):
     # Default
     cf = stats.KendallLike()
@@ -137,36 +146,114 @@ class CorrelationTest(unittest.TestCase):
     self.assertAlmostEqual(r1, 0.982, places=3)
     self.assertAlmostEqual(r2, 0.933, places=3)
 
+
+class StatsTest(unittest.TestCase):
+
+  def testKendallPython(self):
+    gold = [7, 1, 2, 7, 4, 3, 2]
+    metric = [4, 1, 3, 6, 1, 5, 6]
+
+    for variant in ['b', 'c']:
+      ref = scipy.stats.kendalltau(metric, gold, variant=variant)[0]
+
+      # Non-factored version matches scipy.
+      tau = stats.KendallPython(metric, gold, variant=variant)[0]
+      self.assertEqual(ref, tau)
+
+      # Factored version matches scipy.
+      prep = stats.KendallPreproc(gold)
+      tau = stats.KendallPython(metric, None, preproc=prep, variant=variant)[0]
+      self.assertEqual(ref, tau)
+
+  def testReshapeAndFilter(self):
+    gold = [1, 2, None, None, 5, None]
+    scores1 = [1, 2, 3, 4, 5, 6]
+    scores2 = [1, 2, 3, 4, 5, 6]
+    corr1 = stats.Correlation(3, gold, scores1)
+    corr2 = stats.Correlation(3, gold, scores2)
+
+    lens, g, s1, s2 = stats._ReshapeAndFilter(corr1, corr2, 'sys')
+    self.assertEqual(lens, [2, 1])
+    self.assertEqual(list(g), [1, 2, 5])
+    self.assertEqual(list(s1), [1, 2, 5])
+    self.assertEqual(list(s2), [1, 2, 5])
+
+    lens, g, s1, s2 = stats._ReshapeAndFilter(corr1, corr2, 'item')
+    self.assertEqual(lens, [2, 1])
+    self.assertEqual(list(g), [1, 5, 2])
+    self.assertEqual(list(s1), [1, 5, 2])
+    self.assertEqual(list(s2), [1, 5, 2])
+
+    lens, g, s1, s2 = stats._ReshapeAndFilter(corr1, corr2, 'none')
+    self.assertEqual(lens, [3])
+    self.assertEqual(list(g), [1, 2, 5])
+    self.assertEqual(list(s1), [1, 2, 5])
+    self.assertEqual(list(s2), [1, 2, 5])
+
   def testPermutationSigDiff(self):
-    gold = [1, 2, 3, 4, 5, 6]
-    metric1 = [1, 2, 3, 3, 7, 3]
-    metric2 = [2, 1, 2, 6, 8, 8]
-    corr1 = stats.Correlation(3, gold, metric1)
-    corr2 = stats.Correlation(3, gold, metric2)
+    gold = [1, 2, 3, 4, 5, 5, 7, 8]
+    metric1 = [1, 2, 3, 3, 7, 3, 5, 5]
+    metric2 = [2, 1, 2, 6, 8, 8, 7, 6]
+    corr1 = stats.Correlation(4, gold, metric1)
+    corr2 = stats.Correlation(4, gold, metric2)
 
-    p = stats.PermutationSigDiff(corr1, corr2, scipy.stats.pearsonr)
+    pearson, kendall = scipy.stats.pearsonr, scipy.stats.kendalltau
+
+    # Pearson, no averaging, no early stopping.
+    delta = pearson(metric2, gold)[0] - pearson(metric1, gold)[0]
+    p, d, k = stats.PermutationSigDiff(corr1, corr2, pearson, 'none', 1000)
     self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 1000)
 
-    # Pass a functor.
-    corr_fcn = corr1.GenCorrFunction(scipy.stats.pearsonr, False)
-    p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
+    # Pearson, no averaging, with early stopping.
+    delta = pearson(metric2, gold)[0] - pearson(metric1, gold)[0]
+    p, d, k = stats.PermutationSigDiff(
+        corr1, corr2, pearson, 'none', 1000, block_size=50, early_max=0.2)
     self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertLess(k, 1000)  # Fails with very low probabilty.
 
-    # Averaging.
-    corr_fcn = corr1.GenCorrFunction(scipy.stats.pearsonr, True)
-    p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
+    # Pearson, system-wise averaging, no early stopping.
+    cf = stats.CorrFunction(pearson, 4, by_system=True)
+    delta = cf(gold, metric2)[0] - cf(gold, metric1)[0]
+    p, d, k = stats.PermutationSigDiff(corr1, corr2, pearson, 'sys')
     self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 1000)
 
-    # Averaging and empty entries.
-    corr1.gold_scores = [1, None, 3, 4, 5, 6]
-    corr2.gold_scores = [1, None, 3, 4, 5, 6]
-    corr_fcn = stats.CorrFunction(scipy.stats.pearsonr, 3, filter_nones=True)
-    p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
+    # Pearson, as above but with NaN -> 0.
+    cf = stats.CorrFunction(
+        pearson, 4, by_system=True, replace_nans_with_zeros=True)
+    delta = cf(gold, metric2)[0] - cf(gold, metric1)[0]
+    p, d, k = stats.PermutationSigDiff(
+        corr1, corr2, pearson, 'sys', replace_nans_with_zeros=True)
     self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 1000)
 
-    # KendallLike
-    corr_fcn = stats.KendallLike(3, thresh=0)
-    p = stats.PermutationSigDiff(corr1, corr2, corr_fcn)
+    # Pearson, item-wise averaging, no early stopping.
+    cf = stats.CorrFunction(pearson, 4)
+    delta = cf(gold, metric2)[0] - cf(gold, metric1)[0]
+    p, d, k = stats.PermutationSigDiff(corr1, corr2, pearson, 'item')
+    self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 1000)
+
+    # Kendall, item-wise averaging, no early stopping.
+    cf = stats.CorrFunction(kendall, 4)
+    delta = cf(gold, metric2)[0] - cf(gold, metric1)[0]
+    p, d, k = stats.PermutationSigDiff(
+        corr1, corr2, kendall, 'item', k=10, block_size=10, fast_kendall=False)
+    self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 10)
+    # Factored version.
+    p, d, k = stats.PermutationSigDiff(
+        corr1, corr2, kendall, 'item', k=10, block_size=10, fast_kendall=True)
+    self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, delta)
+    self.assertEqual(k, 10)
 
 
 if __name__ == '__main__':
