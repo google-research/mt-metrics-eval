@@ -26,8 +26,22 @@ import scipy.stats
 class Correlation:
   """Data and algorithms for computing correlations.
 
-  See dosctrings for CorrFunction and KendallLike for notes on averaging and
-  handling gold scores that contain missing entries.
+  Assuming you've created a Correlation object 'corr', here are the ways you can
+  call the various correlation functions (using Pearson as an example, but they
+  all work the same way except KendallLike). Adopting the convention from
+  the 'average_by' argument to data.CompareMetrics: none = flatten score
+  matrices into vectors, item = average over correlations for vectors of scores
+  for the same item across all systems; sys =  average over the correlations for
+  vectors of scores for the same system across all items:
+
+     level   average_by   call
+     sys     ---          corr.Pearson()
+     seg     none         corr.Pearson()
+     seg     item         corr.Pearson(True, False)
+     seg     sys          corr.Pearson(True, True)
+
+  See dosctrings for CorrFunction and KendallLike for further notes on averaging
+  and handling gold scores that contain missing entries.
   """
 
   def __init__(self, num_sys, gold_scores, metric_scores):

@@ -863,7 +863,8 @@ def AssignRanks(sig_matrix, pval):
   return ranks
 
 
-def MakeTaskName(  # pylint: disable=unused-argument
+# pylint: disable=unused-argument
+def MakeTaskName(
     test_set, lang, domain, level, human, avg_by, corr, k, gold, refs,
     close_refs=None, use_outliers=False, primary=True, pval=0.05,
     block_size=1000, early_min=0.02, early_max=0.50,

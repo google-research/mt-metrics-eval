@@ -196,6 +196,7 @@ def PrintScores(evs):
   gold_names = sorted(evs.human_score_names)
   metric_names = sorted(evs.metric_names)
 
+  header = ''
   fields = ['system-name', 'domain', 'doc', 'seg-id']
   for level in 'seg', 'doc', 'domain', 'sys':
     if level in evs.levels:

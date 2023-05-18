@@ -10,7 +10,7 @@ given test set and language pair, and lets you do the following:
 meta-info, for the WMT metrics tasks from 2019-2022. This can be done via
 software, or by directly accessing the files in a linux directory
 structure, in a straightforward format.
-- Access human and automatic metric scores for the above data
+- Access human and automatic metric scores for the above data.
 - Reproduce the official results from the WMT metrics tasks. For
 WMT22, there is a colab to do this; other years require a bit more work.
 - Compute various correlations and perform significance tests on correlation
@@ -27,13 +27,6 @@ You need python 3.8 or later. To install:
 git clone https://github.com/google-research/mt-metrics-eval.git
 cd mt-metrics-eval
 pip install .
-```
-
-Optionally test the install:
-
-```bash
-python3 -m unittest mt_metrics_eval.data_test  # Takes about 30 seconds.
-python3 -m unittest mt_metrics_eval.stats_test
 ```
 
 ## Downloading the data
@@ -53,6 +46,14 @@ cd $HOME/.mt-metrics-eval
 wget https://storage.googleapis.com/mt-metrics-eval/mt-metrics-eval-v2.tgz
 tar xfz mt-metrics-eval-v2.tgz
 ```
+
+Once data is downloaded, you can optionally test the install:
+
+```bash
+python3 -m unittest mt_metrics_eval.data_test  # Takes about 30 seconds.
+python3 -m unittest mt_metrics_eval.stats_test
+```
+
 
 ## Running from the command line
 
@@ -159,7 +160,7 @@ python3 -m mt_metrics_eval.score_mqm \
   > mqm.ende.seg.score
 ```
 This produces an intermediate form with single scores per segment that match
-the scores in MTME; the file contains extra columns that contain rater id and
+the scores in MTME; the file contains extra columns with rater id and
 other info.
 
 Other options let you explore different error weightings or extract scores from
