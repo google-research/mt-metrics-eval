@@ -128,10 +128,17 @@ but can take minutes to hours to complete, depending on the task.
 
 ```bash
 # System-level Pearson
-mtme -t wmt22 -l en-de --matrix --k_block 5
+mtme -t wmt22 -l en-de --matrix --matrix_pretty --k_block 5
 
-# Pairwise system-level accuracy, pooling results across all MQM languages
-mtme -t wmt22 -l en-de,zh-en,en-ru --matrix --matrix_corr accuracy --k_block 5
+# System-level paired-rank accuracy, pooling results across all MQM languages
+mtme -t wmt22 -l en-de,zh-en,en-ru --matrix --matrix_pretty \
+  --matrix_corr accuracy --k_block 5
+
+# Segment-level item-wise averaged Kendall-Tau-Acc23 with optimal tie threshold
+# using sampling rate of 1.0 (disabling significance testing for demo).
+mtme -t wmt22 -l en-de --matrix --matrix_pretty --matrix_level seg --avg item \
+  --matrix_corr KendallWithTiesOpt \
+  --matrix_corr_args "{'variant':'acc23', 'sample_rate':1.0}" --k 0
 ```
 
 ## API and Colabs
