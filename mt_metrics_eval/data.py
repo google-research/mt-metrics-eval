@@ -18,6 +18,7 @@ import collections
 import copy
 import itertools
 import os
+import sys
 import tarfile
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple
 import urllib.request
@@ -567,8 +568,8 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
       all systems, at the correct granularity.
 
   Returns:
-    Map from metric names to Correlation objects from which correlation and
-    significance statistics can be computed.
+    Map from metric names to stats.Correlation objects from which correlation
+    and significance statistics can be computed.
   """
   if domain is not None:
     assert domain in evs.domain_names
@@ -629,12 +630,13 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
 
 def CompareMetrics(
     metric_corrs: Dict[str, stats.Correlation],
-    corr_fcn: Callable[[List[float], List[float]], Tuple[float, float]],
+    corr_fcn: Callable[[List[float], List[float], ...], Tuple[float, float]],
     average_by: str = 'none',
     k: int = 1000,
+    psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
     pval: float = 0.05,
-    replace_nans_with_zeros: bool = False,
-    **kwargs,
+    replace_nans_with_zeros: bool = True,
+    **corr_fcn_args,
     ) -> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using a given correlation function.
 
@@ -649,10 +651,9 @@ def CompareMetrics(
       GetCorrelations().
     corr_fcn: Function for generating correlations from metric and gold score
       vectors. Correlations are assumed to be in the first element of the
-      returned tuple (2nd element is ignored). Pass a function like
-      scipy.stats.pearsonr rather than a stats.CorrFunction wrapper (the point
-      of this function is to save you the trouble of creating the wrapper
-      yourself).
+      returned tuple (2nd element is ignored). Pass a function from scipy.stats
+      or any of the plain correlation functions from stats (not wrapped in
+      AverageCorrelation).
     average_by: What to average over when computing final correlations:
       'none' - Treat all scores as single vectors, and compute a single
         correlation. This is the only option that makes sense for system-level
@@ -664,12 +665,13 @@ def CompareMetrics(
     k: Number of resampling runs for PermutationSigDiff test. If k is 0, no
       test is performed, and only the raw ranks of metrics are returned, along
       with an empty significance matrix.
+    psd: Additional parameters for stats.PermutationSigDiff.
     pval: p-value for determining significant differences in ranks.
     replace_nans_with_zeros: If True, replace NaN correlation values with 0.
       If False, remove these values from the computation. The former setting
       will penalize metrics that produce NaN values because they assign all
       items the same score.
-    **kwargs: Additional arguments for PermutationSigDiff.
+    **corr_fcn_args: Optional extra arguments to corr_fcn.
 
   Returns:
     1. Mapping from metric name to (correlation, rank) pairs, where rank is
@@ -685,12 +687,13 @@ def CompareMetrics(
   assert average_by in ('none', 'item', 'sys'), 'Bad average_by value.'
 
   first_corr = list(metric_corrs.values())[0]
-  corr_wrapper = stats.CorrFunction(
+  corr_wrapper = stats.AverageCorrelation(
       corr_fcn,
-      num_sys=0 if average_by == 'none' else first_corr.num_sys,
+      first_corr.num_sys,
+      average_by=average_by,
       filter_nones=first_corr.none_count,
-      by_system=average_by == 'sys',
-      replace_nans_with_zeros=replace_nans_with_zeros)
+      replace_nans_with_zeros=replace_nans_with_zeros,
+      **corr_fcn_args)
 
   # Compute metric correlations, ordered by decreasing correlation.
   corrs_and_ranks = {}
@@ -702,7 +705,7 @@ def CompareMetrics(
   # Compute significance matrix and determine ranks.
   sig_matrix = ComputeSigMatrix(
       metric_corrs, corrs_and_ranks, corr_fcn, average_by, k,
-      replace_nans_with_zeros=replace_nans_with_zeros, **kwargs)
+      psd, replace_nans_with_zeros, **corr_fcn_args)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -720,9 +723,9 @@ def CompareMetricsWithGlobalAccuracy(
     primary_metrics: bool,
     domain: str = None,
     k: int = 1000,
+    psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
     pval: float = 0.05,
     extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
-    **kwargs,
     )-> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using accuracy.
 
@@ -749,12 +752,12 @@ def CompareMetricsWithGlobalAccuracy(
     k: Number of resampling runs for PermutationSigDiff test. If k is 0, no
       test is performed, and only the raw ranks of metrics are returned, along
       with an empty significance matrix.
+    psd: Minor params for PermutationSigDiff.
     pval: p-value for determining significant differences in ranks.
     extern_metrics_list: List of dicts containing external_metrics, one per
-      evalsetin evs_list. Each dict should map metric names to dicts containing
+      evalset in evs_list. Each dict should map metric names to dicts containing
       scores for all systems, at system-level granularity (ie, scores are
       single-element lists).
-    **kwargs: Additional arguments for PermutationSigDiff.
 
   Returns:
     Tuple of (metric->(corr,rank), significance matrix). This is in the same
@@ -803,7 +806,7 @@ def CompareMetricsWithGlobalAccuracy(
 
   # Compute significance matrix and determine ranks.
   sig_matrix = ComputeSigMatrix(
-      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, **kwargs)
+      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -814,10 +817,12 @@ def CompareMetricsWithGlobalAccuracy(
 def ComputeSigMatrix(
     metric_corrs: Dict[str, stats.Correlation],
     corrs_and_ranks: Dict[str, tuple[float, int]],
-    corr_fcn: Callable[[List[float], List[float]], Tuple[float, float]],
+    corr_fcn: Callable[[List[float], List[float], ...], Tuple[float, float]],
     average_by: str,
     k: int,
-    **kwargs,
+    psd: stats.PermutationSigDiffParams,
+    replace_nans_with_zeros: bool,
+    **corr_fcn_args,
 ) -> np.ndarray:
   """Populate significance matrix using PermutationSigDiff with given args."""
   n = len(corrs_and_ranks)
@@ -829,7 +834,8 @@ def ComputeSigMatrix(
     for j in range(i + 1, n):
       m2 = list(corrs_and_ranks)[j]
       pval, _, _ = stats.PermutationSigDiff(
-          metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k, **kwargs)
+          metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k,
+          psd, replace_nans_with_zeros, **corr_fcn_args)
       sig_matrix[i, j] = pval
   return sig_matrix
 
@@ -863,13 +869,29 @@ def AssignRanks(sig_matrix, pval):
   return ranks
 
 
+def PrintMetricComparison(ranks, matrix, pval=0.05, evs=None, file=sys.stdout):
+  """Pretty print the output from CompareMetrics*()."""
+  if not evs:
+    max_len = max(len(m) for m in ranks)
+  else:
+    max_len = max(len(evs.DisplayName(m)) for m in ranks)
+  for i, metric in enumerate(ranks):
+    s, r = ranks[metric]
+    sig = ' '.join(['.'] * (i + 1)) + ' '
+    sig += ' '.join('>' if p < pval else '=' for p in matrix[i][i + 1:])
+    metric = evs.DisplayName(metric) if evs else metric
+    print(f'{metric:<{max_len}} {r:>2} {s:6.3f}  {sig}', file=file)
+
+
 # pylint: disable=unused-argument
 def MakeTaskName(
-    test_set, lang, domain, level, human, avg_by, corr, k, gold, refs,
+    test_set, lang, domain, level, human, avg_by, corr_fcn, k, gold, refs,
     close_refs=None, use_outliers=False, primary=True, pval=0.05,
     block_size=1000, early_min=0.02, early_max=0.50,
-    replace_nans_with_zeros=False):
+    replace_nans_with_zeros=False, **corr_fcn_args) -> str:
   """Make a task name from a set of values assigned to attributes."""
   # Named parameters are just to standardize order.
+  # pylint: disable=unused-variable
+  corr_fcn_args = dict(sorted(corr_fcn_args.items()))
   vals = [f'{v}'.replace(' ', '') for v in locals().values()]
   return ' '.join(f'{k}={v}' for k, v in zip(locals(), vals))

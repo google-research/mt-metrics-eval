@@ -67,7 +67,7 @@ class EvalSetTest(unittest.TestCase):
     for m in 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
       metric_scores = evs.Scores('doc', m + '-ref')
       corr = evs.Correlation(gold_scores, metric_scores, sys_names)
-      c, num_pairs, _, _ = corr.KendallLike()
+      c, _, num_pairs = corr.KendallLike()
       self.assertEqual(num_pairs, 275)
       results[m] = c
     self.assertAlmostEqual(results['sentBLEU'], 0.411, places=3)
@@ -86,7 +86,7 @@ class EvalSetTest(unittest.TestCase):
     for m in 'sentBLEU', 'COMET', 'BLEURT-extended', 'prism', 'YiSi-0':
       metric_scores = evs.Scores('seg', m + '-ref')
       corr = evs.Correlation(gold_scores, metric_scores, sys_names)
-      c, num_pairs, _, _ = corr.KendallLike()
+      c, _, num_pairs = corr.KendallLike()
       results[m] = c
       self.assertEqual(num_pairs, 4637)
     self.assertAlmostEqual(results['sentBLEU'], 0.155, places=3)
