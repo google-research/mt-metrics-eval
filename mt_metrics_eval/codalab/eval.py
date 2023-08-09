@@ -89,31 +89,33 @@ REF_FREE_SYS_REF_FILE = 'goldlabels.reffree.sys.score'
 SEG_RES_SUFFIX = '.seg.score'
 SYS_RES_SUFFIX = '.sys.score'
 
-# Meta-info for current submission. Must contain at least the following entries
-# (any other etries are ignored):
-# TODO(fosterg): Can we include team here?
+# Meta-info filename for current submission. If the file does not exist, no
+# metadata will be read. Otherwise, it must contain at least the following
+# entries (any other etries are ignored):
+# team: NAME
 # primary: Y[es]|N[o]
 META_FILE = 'metadata.txt'
 
-# Place to write results. Fields expected by codalab:
-# TODO(fosterg): Can we include team here?
+# Place to write results. Fields written (last two are expected by codalab,
+# team and primary only written if META_FILE was found):
+# - team: NAME
 # - metric_name: NAME
 # - ref_less: Y|N
 # - primary: Y|N
 # - LP_pearson: PEARSON
 # - LP_kendalltau: KENDALL
-# where LP is one of zhen, enru or ende (note, no hyphen).
+# where LP is one of zhen, heen or ende (note, no hyphen).
 OUT_FILE = 'scores.txt'
 
 # Map official language pairs to standard references.
 LANG_PAIR_TO_REF = {
     'en-de': 'refA',
-    'en-ru': 'refA',
+    'he-en': 'refA',
     'zh-en': 'refA'
 }
 
 # Test set we're reading.
-TEST_SET = 'generaltest2022'
+TEST_SET = 'generaltest2023'
 
 # Name for the global domain.
 GLOBAL_DOMAIN = 'all'
@@ -123,10 +125,11 @@ GLOBAL_DOMAIN = 'all'
 class BasicInfo:
   """Collection of basic test set info for a given language pair."""
 
-  domains: set[str] = dataclasses.field(default_factory=set)
-  docs: set[str] = dataclasses.field(default_factory=set)
-  refs: set[str] = dataclasses.field(default_factory=set)
-  systems: set[str] = dataclasses.field(default_factory=set)
+  # pylint: disable=g-bare-generic
+  domains: set = dataclasses.field(default_factory=set)
+  docs: set = dataclasses.field(default_factory=set)
+  refs: set = dataclasses.field(default_factory=set)
+  systems: set = dataclasses.field(default_factory=set)
   num_segs: int = 0
 
   def add(self, testset, domain, doc, ref, sysname, segno) -> None:
@@ -160,34 +163,39 @@ class BasicInfo:
 def read_metadata(filename: str, required_keys_only=True):
   """Read and check metadata file."""
 
-  metadata = {
-      # 'team': None,
-      'primary': None
-  }
-  with open(filename) as f:
-    for line in f:
-      line = line.strip()
-      if not line: continue
-      k, v = line.split(maxsplit=1)
-      if k.endswith(':'):
-        k = k[:-1]
-      k = k.lower()
-      if required_keys_only and k not in metadata:
-        continue
-      metadata[k] = v
+  metadata = {}
+  if os.path.exists(filename):
+    required = {'team', 'primary'}
+    with open(filename) as f:
+      for line in f:
+        line = line.strip()
+        if not line: continue
+        k, v = line.split(maxsplit=1)
+        if k.endswith(':'):
+          k = k[:-1]
+        k = k.lower()
+        if required_keys_only and k not in required:
+          continue
+        metadata[k] = v
 
-  missing = [k for k, v in metadata.items() if v is None]
-  if missing:
-    missing = ', '.join(f'"{k}"' for k in missing)
-    raise ValueError(f'Missing entries in {META_FILE}: {missing}')
+    missing = [k for k in required if k not in metadata]
+    if missing:
+      missing = ', '.join(f'"{k}"' for k in missing)
+      raise ValueError(f'Missing entries in {META_FILE}: {missing}')
 
-  for k in ['primary']:
-    if metadata[k].lower() in ['y', 'yes']:
-      metadata[k] = 'Y'
-    elif metadata[k].lower() in ['n', 'no']:
-      metadata[k] = 'N'
-    else:
-      raise ValueError(f'Value for "{k}" must be Y or N')
+    for k in ['primary']:
+      if metadata[k].lower() in ['y', 'yes']:
+        metadata[k] = 'Y'
+      elif metadata[k].lower() in ['n', 'no']:
+        metadata[k] = 'N'
+      else:
+        raise ValueError(f'Value for "{k}" must be Y or N')
+
+    primary = metadata['primary'] == 'Y'
+    primary_msg = f'{"" if primary else "non-"}primary submission'
+    print(f'Read metadata from {META_FILE} - {primary_msg}')
+  else:
+    print(f'{META_FILE} not found')
 
   return metadata
 
@@ -379,9 +387,7 @@ def main(argv):
   # Read metadata
   metainfo = read_metadata(
       os.path.join(res_dir, META_FILE), required_keys_only=True)
-  primary = metainfo['primary'] == 'Y'
-  primary_msg = f'{"" if primary else "non-"}primary submission'
-  print(f'Read metadata from {META_FILE} - {primary_msg}')
+  primary = 'primary' in metainfo and metainfo['primary'] == 'Y'
 
   seg_ref_scores, sys_ref_scores = None, None
 
@@ -390,6 +396,7 @@ def main(argv):
   seg_res_file, sys_res_file = get_result_filenames(res_dir)
   #
   seg_metric, seg_res_scores, seg_ref_free = None, None, None
+  sys_metric, sys_res_scores, sys_ref_free = None, None, None
   if seg_res_file:
     print(f'Reading and checking {seg_res_file}:', flush=True)
     seg_res_scores, seg_infos = read_seg_scores(
@@ -397,6 +404,7 @@ def main(argv):
     seg_metric, seg_ref_free = check_uniqueness(seg_res_scores)
     check_coverage(seg_res_scores, primary)
     seg_ref_scores, seg_ref_infos = read_ref_scores('seg', seg_ref_free)
+    sys_ref_scores, sys_ref_infos = read_ref_scores('sys', seg_ref_free)
     for lp, (_, syslist, matrix) in seg_res_scores.items():
       if syslist != seg_ref_scores[lp][1]:
         raise ValueError(f'System list for {lp} doesn\'t match reference: '
@@ -411,7 +419,6 @@ def main(argv):
       info.check(seg_ref_infos[lp], lp)
     print_summary(seg_metric, seg_ref_free, seg_res_scores, seg_infos)
   #
-  sys_metric, sys_res_scores, sys_ref_free = None, None, None
   if sys_res_file:
     print(f'Reading and checking {sys_res_file}:', flush=True)
     sys_res_scores, sys_infos = read_sys_scores(
@@ -419,6 +426,8 @@ def main(argv):
     sys_metric, sys_ref_free = check_uniqueness(sys_res_scores)
     check_coverage(sys_res_scores, primary)
     sys_ref_scores, sys_ref_infos = read_ref_scores('sys', sys_ref_free)
+    if seg_ref_scores is None:
+      seg_ref_scores, seg_ref_infos = read_ref_scores('seg', sys_ref_free)
     for _, _, domainlist, _ in sys_ref_scores.values():
       assert GLOBAL_DOMAIN in domainlist
     for lp, (_, syslist, domainlist, _) in sys_res_scores.items():
