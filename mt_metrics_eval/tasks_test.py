@@ -113,7 +113,8 @@ class TaskSetTest(unittest.TestCase):
         'level': ['sys', 'seg']
     }
     taskset = tasks.TaskSet(attr_combs, k=10)
-    self.assertLen(taskset, 3 * 5 * 2)
+    # pylint: disable=g-generic-assert
+    self.assertEqual(len(taskset), 3 * 5 * 2)
 
     en_de_count = sum(t.lang == 'en-de' for t in taskset)
     self.assertEqual(en_de_count, 10)
@@ -122,7 +123,7 @@ class TaskSetTest(unittest.TestCase):
     self.assertEqual(k10_count, 30)
 
     taskset = tasks.TaskSet()
-    self.assertEmpty(taskset)
+    self.assertEqual(len(taskset), 0)  # pylint: disable=g-generic-assert
 
   def testAdd(self):
     tasks1 = tasks.TaskSet({'lang': ['en-de']})
@@ -135,7 +136,7 @@ class TaskSetTest(unittest.TestCase):
   def testRun(self):
     taskset = tasks.TaskSet({'corr_fcn': ['pearson', 'accuracy']}, k=1)
     res = taskset.Run()
-    self.assertLen(res, 2)
+    self.assertEqual(len(res), 2)  # pylint: disable=g-generic-assert
 
     ref_pearson = tasks.Task(corr_fcn='pearson', k=1).Run()
     self.assertEqual(res.results[0].metrics, ref_pearson.metrics)
@@ -158,13 +159,14 @@ class TaskSetResultsTest(unittest.TestCase):
   def testSplitByAttr(self):
     results = self.Results()
     splits = results.SplitByAttr('lang')
-    self.assertLen(splits, 4)
+    self.assertEqual(len(splits), 4)  # pylint: disable=g-generic-assert
     self.assertEqual(
         list(splits.keys()), ['en-de,en-ru,zh-en', 'en-de', 'en-ru', 'zh-en'])
-    self.assertLen(splits['en-de,en-ru,zh-en'], 1)
-    self.assertLen(splits['en-de'], 2)
-    self.assertLen(splits['en-ru'], 2)
-    self.assertLen(splits['zh-en'], 1)
+    # pylint: disable=g-generic-assert
+    self.assertEqual(len(splits['en-de,en-ru,zh-en']), 1)
+    self.assertEqual(len(splits['en-de']), 2)
+    self.assertEqual(len(splits['en-ru']), 2)
+    self.assertEqual(len(splits['zh-en']), 1)
 
   def testAssignWeights(self):
     results = self.Results()
@@ -184,7 +186,7 @@ class TaskSetResultsTest(unittest.TestCase):
   def testAverageRanks(self):
     results = self.Results()
     ranks = results.AverageRanks()
-    self.assertLen(ranks, 21)
+    self.assertEqual(len(ranks), 21)  # pylint: disable=g-generic-assert
     self.assertEqual(list(ranks.values()), sorted(ranks.values()))
     self.assertTrue(all(r >= 1 for r in ranks.values()))
 

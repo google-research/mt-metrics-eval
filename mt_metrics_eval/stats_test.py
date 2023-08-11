@@ -482,7 +482,7 @@ class PairwisePermutationSigDiffTest(unittest.TestCase):
   def testKendallVariantsB(self):
     tau1 = self.corr1.KendallVariants('item', 'b', epsilon=1)[0]
     tau2 = self.corr2.KendallVariants('item', 'b', epsilon=1)[0]
-    p, d, k = stats.PairwisePermutationSigDiff(
+    _, d, k = stats.PairwisePermutationSigDiff(
         self.corr1, self.corr2, 'b', 'item', k=10, epsilon1=1, epsilon2=1)
     self.assertAlmostEqual(d, tau2 - tau1)
     self.assertEqual(k, 10)
@@ -519,7 +519,7 @@ class SampleTest(unittest.TestCase):
 
   def testUniformSample(self):
     s1 = stats.Sample(10, 5, 'uniform', seed=11)
-    self.assertLen(s1.sample, 5)
+    self.assertEqual(len(s1.sample), 5)  # pylint: disable=g-generic-assert
     s2 = stats.Sample(10, 5, 'uniform', seed=11)
     self.assertEqual(list(s1.sample), list(s2.sample))
 
@@ -527,21 +527,21 @@ class SampleTest(unittest.TestCase):
 
   def testStratifiedSample(self):
     s = stats.Sample(8, 4, 'stratify', [2, 2, 2, 2])
-    self.assertLen(s.sample, 4)
+    self.assertEqual(len(s.sample), 4)  # pylint: disable=g-generic-assert
     self.assertIn(s.sample[0], [0, 1])
     self.assertIn(s.sample[1], [2, 3])
     self.assertIn(s.sample[2], [4, 5])
     self.assertIn(s.sample[3], [6, 7])
 
     s = stats.Sample(8, 4, 'stratify', [2, 6])
-    self.assertLen(s.sample, 4)
+    self.assertEqual(len(s.sample), 4)  # pylint: disable=g-generic-assert
     self.assertIn(s.sample[0], [0, 1])
     self.assertIn(s.sample[1], range(2, 8))
     self.assertIn(s.sample[2], range(2, 8))
     self.assertIn(s.sample[3], range(2, 8))
 
     s = stats.Sample(8, 3, 'stratify', [1, 7])
-    self.assertLen(s.sample, 3)
+    self.assertEqual(len(s.sample), 3)  # pylint: disable=g-generic-assert
     self.assertNotIn(0, s.sample)
 
 
