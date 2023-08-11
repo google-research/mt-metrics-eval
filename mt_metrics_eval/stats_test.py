@@ -199,6 +199,19 @@ class CorrelationFunctionsTest(unittest.TestCase):
           None, metric, preproc=prep, variant=variant)[0]
       self.assertEqual(ref, tau)
 
+      # Metric-factored version matches scipy
+      pd = stats.PairwiseDiffs(metric)
+      m = metric if variant == 'c' else None
+      tau = stats.KendallVariants(
+          gold, m, variant=variant, metric_preproc=pd)[0]
+      self.assertEqual(ref, tau)
+
+      # Dual-factored version matches scipy
+      m = metric if variant == 'c' else None
+      tau = stats.KendallVariants(
+          None, m, variant=variant, preproc=prep, metric_preproc=pd)[0]
+      self.assertEqual(ref, tau)
+
   def testKendallVariants_23(self):
     x = [1, 1, 1, 2, 2, 3, 4]
     y = [1, 1, 2, 2, 4, 3, 3]
@@ -255,11 +268,20 @@ class CorrelationFunctionsTest(unittest.TestCase):
     actual_tau = stats.KendallVariants(x, y, variant='23', epsilon=1.0)[0]
     self.assertEqual(actual_tau, expected_tau)
 
-    # Test factored version
+    # Test factored versions
     prep = stats.KendallPreproc(x)
+    pd = stats.PairwiseDiffs(y, epsilon=1.0)
+    #
     actual_tau = stats.KendallVariants(
-        None, y, epsilon=1.0, preproc=prep, variant='23'
-    )[0]
+        None, y, epsilon=1.0, preproc=prep, variant='23')[0]
+    self.assertEqual(actual_tau, expected_tau)
+    #
+    actual_tau = stats.KendallVariants(
+        x, None, metric_preproc=pd, variant='23')[0]
+    self.assertEqual(actual_tau, expected_tau)
+    #
+    actual_tau = stats.KendallVariants(
+        None, None, preproc=prep, metric_preproc=pd, variant='23')[0]
     self.assertEqual(actual_tau, expected_tau)
 
   def testKendallWithTiesOpt(self):
@@ -440,6 +462,32 @@ class PermutationSigDiffTest(unittest.TestCase):
     self.assertEqual(k, 10)
 
 
+class PairwisePermutationSigDiffTest(unittest.TestCase):
+
+  gold = [1, 3, 3, 3, 1, 2, 1, 2]
+  metric1 = [2, 4, 6, 6, 2, 6, 3, 7]
+  metric2 = [1, 5, 4, 4, 4, 3, 2, 1]
+  corr1 = stats.Correlation(4, gold, metric1)
+  corr2 = stats.Correlation(4, gold, metric2)
+
+  def testKendallVariantsAcc23(self):
+    tau1 = self.corr1.KendallWithTiesOpt('item', 'acc23', sample_rate=1.0)[0]
+    tau2 = self.corr2.KendallWithTiesOpt('item', 'acc23', sample_rate=1.0)[0]
+    p, d, k = stats.PairwisePermutationSigDiff(
+        self.corr1, self.corr2, 'acc23', 'item', k=10, sample_rate=1.0)
+    self.assertGreater(p, 0)
+    self.assertAlmostEqual(d, tau2 - tau1)
+    self.assertEqual(k, 10)
+
+  def testKendallVariantsB(self):
+    tau1 = self.corr1.KendallVariants('item', 'b', epsilon=1)[0]
+    tau2 = self.corr2.KendallVariants('item', 'b', epsilon=1)[0]
+    p, d, k = stats.PairwisePermutationSigDiff(
+        self.corr1, self.corr2, 'b', 'item', k=10, epsilon1=1, epsilon2=1)
+    self.assertAlmostEqual(d, tau2 - tau1)
+    self.assertEqual(k, 10)
+
+
 class WilliamsSigDiffTest(unittest.TestCase):
 
   def testSigDiff(self):
@@ -465,6 +513,70 @@ class WilliamsSigDiffTest(unittest.TestCase):
     self.assertAlmostEqual(p, 0.121, places=3)
     self.assertAlmostEqual(r1, 0.982, places=3)
     self.assertAlmostEqual(r2, 0.933, places=3)
+
+
+class SampleTest(unittest.TestCase):
+
+  def testUniformSample(self):
+    s1 = stats.Sample(10, 5, 'uniform', seed=11)
+    self.assertLen(s1.sample, 5)
+    s2 = stats.Sample(10, 5, 'uniform', seed=11)
+    self.assertEqual(list(s1.sample), list(s2.sample))
+
+    self.assertEqual(list(s1.sample), list(s1.Select(range(10))))
+
+  def testStratifiedSample(self):
+    s = stats.Sample(8, 4, 'stratify', [2, 2, 2, 2])
+    self.assertLen(s.sample, 4)
+    self.assertIn(s.sample[0], [0, 1])
+    self.assertIn(s.sample[1], [2, 3])
+    self.assertIn(s.sample[2], [4, 5])
+    self.assertIn(s.sample[3], [6, 7])
+
+    s = stats.Sample(8, 4, 'stratify', [2, 6])
+    self.assertLen(s.sample, 4)
+    self.assertIn(s.sample[0], [0, 1])
+    self.assertIn(s.sample[1], range(2, 8))
+    self.assertIn(s.sample[2], range(2, 8))
+    self.assertIn(s.sample[3], range(2, 8))
+
+    s = stats.Sample(8, 3, 'stratify', [1, 7])
+    self.assertLen(s.sample, 3)
+    self.assertNotIn(0, s.sample)
+
+
+class PairwiseDiffsTest(unittest.TestCase):
+  def testPairWiseDiffs(self):
+    x1 = stats.PairwiseDiffs([1.0, 2.0, 2.1, 3.0], 0.2)
+    x2 = stats.PairwiseDiffs([4.0, 2.0, 3.0, 5.0], 1.0)
+
+    # Number of actual ties, correcting for diagonal and double counting.
+    self.assertEqual((x1.x_is_tie.sum() - 4) / 2, 1)
+    self.assertEqual((x2.x_is_tie.sum() - 4) / 2, 3)
+
+    # Number of > and < comparisons.
+    self.assertEqual((np.triu(x1.x_diffs) > 0).sum(), 5)
+    self.assertEqual((np.triu(x1.x_diffs) < 0).sum(), 0)
+    self.assertEqual((np.triu(x2.x_diffs) > 0).sum(), 2)
+    self.assertEqual((np.triu(x2.x_diffs) < 0).sum(), 1)
+
+    # Combine with complementary weight matrices
+    w1 = np.triu(np.random.binomial(1, 0.5, (4, 4)))
+    w1 = w1 + w1.T
+    w2 = 1 - w1
+    x1h = x1.Combine(x2, w1, w2)
+    x2h = x2.Combine(x1, w1, w2)
+
+    # Ties are conserved
+    nties1 = (x1h.x_is_tie.sum() - 4) / 2
+    nties2 = (x2h.x_is_tie.sum() - 4) / 2
+    self.assertEqual(nties1 + nties2, 4)
+
+    # > and < are conserved
+    ngt = (np.triu(x1h.x_diffs) > 0).sum() + (np.triu(x2h.x_diffs) > 0).sum()
+    nlt = (np.triu(x1h.x_diffs) < 0).sum() + (np.triu(x2h.x_diffs) < 0).sum()
+    self.assertEqual(ngt, 7)
+    self.assertEqual(nlt, 1)
 
 
 if __name__ == '__main__':

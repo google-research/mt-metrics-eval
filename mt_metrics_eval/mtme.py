@@ -55,6 +55,7 @@ from absl import flags
 from mt_metrics_eval import data
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
+from mt_metrics_eval import tasks
 import scipy.stats
 import glob
 
@@ -98,6 +99,8 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'output', None, 'Output file, defaults to STDOUT.', short_name='o')
 flags.DEFINE_string(
+    'matrix_save', None, 'File for json output from --matrix option.')
+flags.DEFINE_string(
     'compare',
     None,
     'File containing scores for comparison to --input scores, in the same '
@@ -131,6 +134,11 @@ flags.DEFINE_float(
 flags.DEFINE_float(
     'early_max', 0.50,
     'Early stop PERM-BOTH if pval > early_max at current block boundary.')
+flags.DEFINE_string(
+    'matrix_perm_test', 'scores',
+    'Type of permutation test to run, one of "scores" or "pairs". The pairs '
+    'test only works with KendallTiesWithOpt correlation, with variant set to '
+    '"23" or "acc23".')
 flags.DEFINE_float(
     'thresh', -1, 'Threshold for WMT Kendall-like correlation. Defaults to 25 '
     'if gold scores are WMT raw, otherwise 0. (If using --matrix, set '
@@ -193,7 +201,7 @@ flags.DEFINE_string(
     'matrix_corr_args', '{}',
     'Extra arguments to the matrix_corr function, a string that can be '
     'converted to a python dict, eg \'{"variant": "acc23", "epsilon": 10}\'.')
-flags.DEFINE_bool('matrix_pretty', False, 'Pretty-print matrix output.')
+
 
 FLAGS = flags.FLAGS
 
@@ -241,87 +249,50 @@ def PrintScores(evs):
         fh.write('\t'.join(fields) + '\n')
 
 
-def GetRefSets(evs_list, name, refs_flag_val):
-  """Get singleton sets of references to match given evs_list."""
-  num_needed = len(evs_list)
-  if not refs_flag_val:
-    return [set()] * num_needed
-  vals = refs_flag_val.split(',')
-  if len(vals) == 1:
-    vals = vals * num_needed
-  elif len(vals) != num_needed:
-    raise ValueError(
-        f'Wrong number of references for {name} - expecting 1 or {num_needed}')
-  return [{evs.std_ref} if v == 'std' else set(v)
-          for evs, v in zip(evs_list, vals)]
+def Flag2TaskArg(flag_val, sets=False):
+  """Convert gold and ref flag values to task arguments."""
+  if flag_val == 'std' or flag_val == 'None' or flag_val == '':
+    return None
+  vals = flag_val.split(',')
+  if sets:
+    # Limited to singleton sets.
+    vals = [set(v) for v in vals]
+  return vals[0] if len(vals) == 1 else vals
 
 
 def PrintMatrix():
   """Print ranks, correlations, and comparison matrix for a set of metrics."""
 
-  domain = None if FLAGS.matrix_domain == 'None' else FLAGS.matrix_domain
-  corr_fcn_args = ast.literal_eval(FLAGS.matrix_corr_args)
-
-  if FLAGS.matrix_corr == 'accuracy':
-    evs_list = [data.EvalSet(FLAGS.test_set, lp, True)
-                for lp in FLAGS.language_pair.split(',')]
-    refs = GetRefSets(evs_list, 'matrix_refs', FLAGS.matrix_refs)
-    close_refs = GetRefSets(evs_list, 'close_refs', FLAGS.matrix_close_refs)
-    results = data.CompareMetricsWithGlobalAccuracy(
-        evs_list, refs, close_refs, FLAGS.matrix_human, FLAGS.use_outliers,
-        FLAGS.gold, FLAGS.matrix_primary, domain, FLAGS.k,
-        psd=stats.PermutationSigDiffParams(
-            FLAGS.k_block, FLAGS.early_min, FLAGS.early_max),
-        pval=FLAGS.matrix_pval)
-  else:
-    evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair, True)
-    refs = FLAGS.matrix_refs
-    refs = {evs.std_ref} if refs == 'std' else set(refs.split(','))
-    close_refs = set()
-    if FLAGS.matrix_close_refs:
-      close_refs = set(FLAGS.close_refs.split(','))
-    corr_fcn = {
-        'pearson': scipy.stats.pearsonr,
-        'spearman': scipy.stats.spearmanr,
-        'kendall': scipy.stats.kendalltau,
-        'KendallLike': stats.KendallLike,
-        'KendallVariants': stats.KendallVariants,
-        'KendallWithTiesOpt': stats.KendallWithTiesOpt,
-    }[FLAGS.matrix_corr]
-    corrs = data.GetCorrelations(
-        evs, FLAGS.matrix_level, main_refs=refs, close_refs=close_refs,
-        include_human=FLAGS.matrix_human, include_outliers=FLAGS.use_outliers,
-        gold_name=FLAGS.gold, primary_metrics=FLAGS.matrix_primary,
-        domain=domain)
-    metrics, sig_matrix = data.CompareMetrics(
-        corrs, corr_fcn, FLAGS.avg, FLAGS.k,
-        psd=stats.PermutationSigDiffParams(
-            FLAGS.k_block, FLAGS.early_min, FLAGS.early_max),
-        pval=FLAGS.matrix_pval,
-        replace_nans_with_zeros=FLAGS.replace_nans_with_zeros,
-        **corr_fcn_args)
-    # Make compatible with accuracy results.
-    results = ({evs.DisplayName(m): v for m, v in metrics.items()},
-               sig_matrix)
-
-  task = data.MakeTaskName(
-      FLAGS.test_set, FLAGS.language_pair, domain, FLAGS.matrix_level,
-      FLAGS.matrix_human, FLAGS.avg, FLAGS.matrix_corr, FLAGS.k, FLAGS.gold,
-      refs, close_refs, FLAGS.use_outliers, FLAGS.matrix_primary,
-      FLAGS.matrix_pval, FLAGS.k_block, FLAGS.early_min, FLAGS.early_max,
-      FLAGS.replace_nans_with_zeros, **corr_fcn_args)
+  task = tasks.Task(
+      test_set=FLAGS.test_set,
+      lang=FLAGS.language_pair,
+      domain=None if FLAGS.matrix_domain == 'None' else FLAGS.matrix_domain,
+      level=FLAGS.matrix_level,
+      human=FLAGS.matrix_human,
+      avg_by=FLAGS.avg,
+      corr_fcn=FLAGS.matrix_corr,
+      k=FLAGS.k,
+      gold=Flag2TaskArg(FLAGS.gold),
+      refs=Flag2TaskArg(FLAGS.matrix_refs, sets=True),
+      close_refs=Flag2TaskArg(FLAGS.matrix_close_refs, sets=True),
+      use_outliers=FLAGS.use_outliers,
+      primary=FLAGS.matrix_primary,
+      pval=FLAGS.matrix_pval,
+      block_size=FLAGS.k_block,
+      early_min=FLAGS.early_min,
+      early_max=FLAGS.early_max,
+      replace_nans_with_zeros=FLAGS.replace_nans_with_zeros,
+      perm_test=FLAGS.matrix_perm_test,
+      corr_fcn_args=ast.literal_eval(FLAGS.matrix_corr_args)
+  )
+  task_results = task.Run()
   fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
   with fh:
-    metrics, sig_matrix = results
-    fh.write(task + '\n')
-    if FLAGS.matrix_pretty:
-      data.PrintMetricComparison(
-          metrics, sig_matrix, FLAGS.matrix_pval, file=fh)
-    else:
-      for i, (m, (corr, rank)) in enumerate(metrics.items()):
-        sigs = ['1' if p < FLAGS.matrix_pval else '0' for p in sig_matrix[i]]
-        sigs = ['x'] * (i + 1) + sigs[i + 1:]
-        fh.write(f'{m} {rank} {corr:f} {" ".join(sigs)}\n')
+    fh.write(task_results.name + '\n')
+    fh.write(task_results.Str())
+  if FLAGS.matrix_save:
+    with open(FLAGS.matrix_save, 'w') as fh:
+      task_results.Write(fh)
 
 
 def PrintCorrelation(evs, scorefile, tag, outfile):

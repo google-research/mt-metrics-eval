@@ -30,7 +30,7 @@ install_requires = [
 
 setuptools.setup(
     name="mt-metrics-eval",
-    version="0.0.1",
+    version="0.0.2",
     author="George Foster",
     description="Toolkit for evaluating Machine Translation metrics.",
     long_description=long_description,

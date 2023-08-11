@@ -29,7 +29,7 @@ This module provides:
 import dataclasses
 import itertools
 import math
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Callable, Optional, Tuple
 import warnings
 from mt_metrics_eval import tau_optimization
 import numpy as np
@@ -122,9 +122,10 @@ class Correlation:
 class AverageCorrelation:
   """Wrap a correlation function to provide averaging and None filtering."""
 
+  # pylint: disable=g-bare-generic
   def __init__(
       self,
-      corr_fcn: Callable[[ArrayLike, ArrayLike, ...], Tuple[Any, ...]],
+      corr_fcn: Callable[..., Tuple],
       num_sys: int = 0,
       average_by: str = 'none',
       filter_nones: bool = True,
@@ -266,12 +267,33 @@ class KendallPreproc:
     self.ytie = sum(n * (n - 1) // 2 for n in counts)
 
 
+class PairwiseDiffs:
+  """Matrix of pairwise score differences over a vector of values."""
+
+  def __init__(self, x=None, epsilon=0.0):
+    if x is not None:
+      x = np.asarray(x)
+      x1, x2 = np.meshgrid(x, x.T)
+      self.x_diffs = x1 - x2
+      # Introduce ties into x by setting the diffs to 0 if they are <= epsilon
+      self.x_is_tie = np.abs(self.x_diffs) <= epsilon
+      self.x_diffs[self.x_is_tie] = 0.0
+
+  def Combine(self, other, self_wts, other_wts):
+    """Combine with binary weight matrices."""
+    ret = PairwiseDiffs()
+    ret.x_diffs = self_wts  * self.x_diffs + other_wts * other.x_diffs
+    ret.x_is_tie = self_wts * self.x_is_tie + other_wts * other.x_is_tie
+    return ret
+
+
 def _MatrixSufficientStatistics(
     x: ArrayLike,
     y: ArrayLike,
     epsilon: float,
     preproc: Optional[KendallPreproc],
-) -> Tuple[int, int, int, int, int]:
+    preproc_x: Optional[KendallPreproc],
+    ) -> Tuple[int, int, int, int, int]:
   """Calculates tau sufficient statistics using matrices in NumPy.
   
   An absolute difference less than `epsilon` in x pairs is considered to be
@@ -285,16 +307,18 @@ def _MatrixSufficientStatistics(
     preproc: A `KendallPreproc` object that has been called on a vector of
       y values to be compared to the currrent x. If this is non-None, the y
       parameter is ignored.
+    preproc_x: A `PairwiseDiffs` object that has been called on a vector of
+      x values to be compared to the currrent y. If this is non-None, the x
+      parameter is ignored.
 
   Returns:
     The number of concordant pairs, discordant pairs, pairs tied only in x,
     paired tied only in y, and pairs tied in both x and y.
   """
-  x1, x2 = np.meshgrid(x, x.T)
-  x_diffs = x1 - x2
-  # Introduce ties into x by setting the diffs to 0 if they are <= epsilon
-  x_is_tie = np.abs(x_diffs) <= epsilon
-  x_diffs[x_is_tie] = 0.0
+  if preproc_x is None:
+    preproc_x = PairwiseDiffs(x, epsilon)
+  x_diffs = preproc_x.x_diffs
+  x_is_tie = preproc_x.x_is_tie
 
   if preproc is None:
     y1, y2 = np.meshgrid(y, y.T)
@@ -304,7 +328,7 @@ def _MatrixSufficientStatistics(
     y_diffs = preproc.y_diffs
     y_is_tie = preproc.y_is_tie
 
-  n = len(x)
+  n = len(y) if preproc is None else len(preproc.y)
   num_pairs = int(scipy.special.comb(n, 2))
   # All of the counts are divided by 2 because each pair is double counted. The
   # double counted data will always be an even number, so dividing by 2 will
@@ -404,6 +428,7 @@ def KendallVariants(
     variant: str = 'b',
     preproc: Optional[KendallPreproc] = None,
     epsilon: float = 0.0,
+    metric_preproc: Optional[PairwiseDiffs] = None,
 ) -> Tuple[float, float]:
   """Lightweight, optionally factored versions of variants on Kendall's Tau.
 
@@ -436,6 +461,10 @@ def KendallVariants(
       the gold_scores parameter is ignored.
     epsilon: The threshold for which an absolute difference in metric scores
       should be considered a tie.
+    metric_preproc: A preprocessing object that has been called on a vector of
+      metric values to be compared to the currrent metric_scores. If this is
+      non-None, the metric_scores parameter is ignored (unless the variant is
+      'c', in which case it must always be explicitly provided).
 
   Returns:
     A tuple (k, 0) where the first element is the Kendall statistic and the
@@ -446,27 +475,26 @@ def KendallVariants(
   if epsilon > 0 and variant == 'c':
     # It's not clear how to define minclasses with a non-zero epsilon.
     raise ValueError('Non-zero epsilon with tau-c not supported.')
+  if metric_scores is None and variant == 'c':
+    raise ValueError('Metric scores must be provided for tau-c.')
 
   # The helper functions and tau_optimization expect metric_scores first, the
   # reverse of the convention used for public methods in this module.
   x, y = metric_scores, gold_scores
 
-  x = np.asarray(x)
-  if not preproc:
-    y = np.asarray(y)
-  else:
-    y = preproc.y
+  x = np.asarray(x) if x is not None else None
+  y = np.asarray(y) if y is not None else preproc.y
 
-  if epsilon > 0:
+  if epsilon > 0 or metric_preproc is not None:
     con, dis, xtie_only, ytie_only, tie_both = _MatrixSufficientStatistics(
-        x, y, epsilon, preproc
+        x, y, epsilon, preproc, metric_preproc
     )
   else:
     con, dis, xtie_only, ytie_only, tie_both = _FenwickTreeSufficientStatistics(
         x, y, preproc
     )
 
-  size = x.size
+  size = y.size
   xtie = xtie_only + tie_both
   ytie = ytie_only + tie_both
   tot = con + dis + xtie_only + ytie_only + tie_both
@@ -550,7 +578,7 @@ def _Reshape(vector, num_sys, average_by):
 
 def _ReshapeAndFilter(
     corr1: Correlation, corr2: Correlation, average_by: str
-) -> Tuple[List[int], np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[list[int], np.ndarray, np.ndarray, np.ndarray]:
   """Prepare candidate score vectors for paired significance tests.
 
   Helper function for PermutationSigDiff that creates flattened vectors for
@@ -606,16 +634,17 @@ class PermutationSigDiffParams:
   early_max: float = 0.5
 
 
+# pylint: disable=g-bare-generic
 def PermutationSigDiff(
     corr1: Correlation,
     corr2: Correlation,
-    corr_fcn: Callable[[ArrayLike, ArrayLike, ...], Tuple[Any, ...]],
+    corr_fcn: Callable[..., Tuple],
     average_by: str = 'none',
     k: int = 1000,
     params: PermutationSigDiffParams = PermutationSigDiffParams(),
     replace_nans_with_zeros: bool = False,
     **corr_fcn_args
-    ) -> Tuple[float, float, int]:
+    ) -> tuple[float, float, int]:
   """Determine if there is a significant difference between two correlations.
 
   Uses the PERM-BOTH permutation test advocated by
@@ -695,6 +724,109 @@ def PermutationSigDiff(
   return large_delta_count / i, delta, i
 
 
+def PairwisePermutationSigDiff(
+    corr1: Correlation,
+    corr2: Correlation,
+    variant: str = 'acc23',
+    average_by: str = 'none',
+    k: int = 1000,
+    params: PermutationSigDiffParams = PermutationSigDiffParams(),
+    epsilon1: Optional[float] = None,
+    epsilon2: Optional[float] = None,
+    sample_rate: float = 1.0,
+    replace_nans_with_zeros: bool = False,
+    ) -> tuple[float, float, int]:
+  """Determine if there is a significant delta between two Kendall correlations.
+
+  Perform a permutation test over Kendall correlations by swapping the results
+  of pairwise comparisons rather than metric scores. This allows two metrics
+  with different optimal tie thresholds to be compared on an equal footing
+  without having to perform expensive re-calibration for each random draw in the
+  permutation test, as is done in PermutationSigDiff with corr_fcn=
+  KendallWithTiesOpt. This is not an approximation of the stanard permutation
+  test, since it can generate correlation values that can't result from any
+  combination of the two original metric score vectors.
+
+  Args:
+    corr1: Statistics for metric1.
+    corr2: Statistics for metric2.
+    variant: Kendall variant, see KendallVariants.
+    average_by: Either 'sys', 'item' or 'none' to group by rows, columns, or
+      neither.
+    k: Number of resampling runs.
+    params: Early-stopping parameters, see PermutationSigDiffParams.
+    epsilon1: KendallVariants epsilon argument for metric1. If None, an optimal
+      value will be used. This is equivalent to using KendallWithTiesOpt as the
+      correlation; it only supports the '*23' variants.
+    epsilon2: KendallVariants epsilon argument for metric2. If None, an optimal
+      value will be used. This is equivalent to using KendallWithTiesOpt as the
+      correlation; it only supports the '*23' variants.
+    sample_rate: Sample rate to use for epsilon calibration, see
+      KendallWithTiesOpt.
+    replace_nans_with_zeros: When averaging, replace NaNs with 0 rather than
+      removing them from the average. No-op if corr_fcn is KendallWithTiesOpt.
+
+  Returns:
+    - p-value for correlation of metric2 > correlation of metric1
+    - delta: corr_fcn(metric2) - corr_fcn(metric1)
+    - k_used: number of resampling runs actually performed
+  """
+  if variant == 'c':
+    # tau-c depends on the actual metric scores, rather than just the pairwise
+    # ranks, so it's not defined once we start permuting pairs.
+    raise ValueError('tau-c not supported by PairwisePermutationSigDiff.')
+  if epsilon1 is None:
+    _, epsilon1, _ = KendallWithTiesOpt(
+        corr1.gold_scores, corr1.metric_scores, variant, corr1.num_sys,
+        average_by, sample_rate)
+  if epsilon2 is None:
+    _, epsilon2, _ = KendallWithTiesOpt(
+        corr2.gold_scores, corr2.metric_scores, variant, corr2.num_sys,
+        average_by, sample_rate)
+  if epsilon1 < 0 or epsilon2 < 0:
+    raise ValueError('Epsilon must be non-negative.')
+
+  lens, gold, mscores1, mscores2 = _ReshapeAndFilter(corr1, corr2, average_by)
+  starts = np.r_[0, np.cumsum(lens)]
+  bounds = list(zip(starts[:-1], starts[1:]))
+
+  preprocs_gold, preprocs1, preprocs2, = [], [], []
+  for (b, e) in bounds:
+    preprocs_gold.append(KendallPreproc(gold[b: e]))
+    preprocs1.append(PairwiseDiffs(mscores1[b: e], epsilon1))
+    preprocs2.append(PairwiseDiffs(mscores2[b: e], epsilon2))
+
+  def _Corr(preprocs):
+    vals = [KendallVariants(None, None, variant, g, 0, m)[0]
+            for g, m in zip(preprocs_gold, preprocs)]
+    if replace_nans_with_zeros:
+      vals = np.nan_to_num(vals)
+    else:
+      vals = np.asarray(vals)[~np.isnan(vals)]
+    return np.average(vals) if len(vals) else 0
+
+  delta = _Corr(preprocs2) - _Corr(preprocs1)
+  i, large_delta_count = 1, 0
+  for i in range(1, k + 1):
+    # TODO(fosterg): Vectorize if this is too slow.
+    hybrids1, hybrids2 = [], []
+    for n, m1, m2 in zip(lens, preprocs1, preprocs2):
+      w1 = np.triu(np.random.binomial(1, 0.5, (n, n)))
+      w1 = w1 + w1.T  # symmetrize, ignoring diagonal since diffs are 0 there
+      w2 = 1 - w1
+      hybrids1.append(m1.Combine(m2, w1, w2))
+      hybrids2.append(m2.Combine(m1, w1, w2))
+
+    if _Corr(hybrids2) - _Corr(hybrids1) >= delta:
+      large_delta_count += 1
+      if i % params.block_size == 0:
+        pval = large_delta_count / i
+        if pval < params.early_min or pval > params.early_max:
+          break
+
+  return large_delta_count / i, delta, i
+
+
 def WilliamsSigDiff(corr1, corr2, corr_fcn, one_sided=True):
   """Determine if there is a significant difference between two correlations.
 
@@ -735,3 +867,74 @@ def WilliamsTest(r12, r13, r23, n, one_sided=True):
   tden = np.sqrt(2 * (n - 1) / (n - 3) * k + rbar**2 * (1 - r23)**3)
   p = scipy.stats.t.sf(np.abs(tnum / tden), n - 3)
   return p if one_sided else 2 * p
+
+
+class Sample:
+  """Sample indexes using a given sampling method."""
+
+  def _SubsampleSizes(self, proportions, size, bin_sizes):
+    """Partition `size` elements according to given proportions."""
+
+    # Shuffle to avoid bias when tie breaking.
+    shuffled_ind = np.random.permutation(len(proportions))
+    proportions = proportions[shuffled_ind]
+    bin_sizes = bin_sizes[shuffled_ind]
+
+    ideal_sizes = proportions * size
+    sizes = ideal_sizes.astype(int)
+    residuals = sizes - ideal_sizes  # Sort largest first.
+    residual_indices = np.argpartition(residuals, size - sum(sizes))
+    missing = size - sum(sizes)
+    sizes[residual_indices[:missing]] += 1
+
+    # Ensure constraints are satisfied by recursively redistributing mass.
+    if (bin_sizes < sizes).any():
+      assert sum(bin_sizes) >= size
+      realloc_indices = np.flatnonzero(sizes <= bin_sizes)
+      mass_to_reallocate = sum(np.maximum(sizes - bin_sizes, 0))
+      mass_to_reallocate += sum(sizes[realloc_indices])
+      sizes = np.minimum(sizes, bin_sizes)
+      proportions_to_reallocate = proportions[realloc_indices]
+      proportions_to_reallocate /= sum(proportions_to_reallocate)
+      bin_sizes_to_reallocate = bin_sizes[realloc_indices]
+      realloc_sizes = self._subsample_sizes(
+          proportions_to_reallocate, mass_to_reallocate,
+          bin_sizes_to_reallocate)
+      sizes[realloc_indices] = realloc_sizes
+      assert (sizes <= bin_sizes).all()
+
+    assert sum(sizes) == size, (sum(sizes), size)
+    return sizes[np.argsort(shuffled_ind)]  # unshuffle
+
+  def __init__(self, total_size, size, method, bin_sizes=None, seed=None):
+    """Create sample: draw `size` indexes in [0, total_size)."""
+
+    self.total_size = total_size
+    self.size = size
+    self.method = method
+    self.bin_sizes = bin_sizes
+    self.seed = seed
+
+    rng = np.random.default_rng(seed) if seed else np.random.default_rng()
+    if size == 0 or size > total_size:
+      size = total_size
+    if method == 'uniform':
+      self.sample = rng.choice(total_size, size, replace=False)
+    elif method == 'stratify':
+      assert sum(bin_sizes) == total_size
+      bin_sizes = np.asarray(bin_sizes)
+      proportions = bin_sizes / total_size
+      size_per_bin = self._SubsampleSizes(proportions, size, bin_sizes)
+      self.sample = []
+      beg = 0
+      for n, s in zip(bin_sizes, size_per_bin):
+        self.sample.extend(rng.choice(n, s, replace=False) + beg)
+        beg += n
+    else:
+      raise ValueError(f'Unknown method: {method}')
+
+  def Select(self, v):
+    """Extract selected items from vector of numeric values."""
+    assert len(v) == self.total_size
+    return np.asarray(v)[self.sample]
+
