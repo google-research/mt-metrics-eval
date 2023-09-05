@@ -23,6 +23,7 @@ with open("README.md", "r") as fh:
   long_description = fh.read()
 
 install_requires = [
+    "apache_beam",
     "numpy",
     "scipy",
     "absl-py",
