@@ -137,7 +137,7 @@ class Task:
   def StrVal(self, attr):
     return f'{getattr(self, attr)}'.replace(' ', '')
 
-  def Run(self, eval_set_dict=None) -> TaskResults:
+  def Run(self, eval_set_dict=None, parallel_file=None) -> TaskResults:
     """Generate metric correlations and pairwise significance results."""
 
     def _Evs(lp):
@@ -154,7 +154,8 @@ class Task:
       res = data.CompareMetricsWithGlobalAccuracy(
           evs_list, self.refs, self.close_refs, self.human,
           self.use_outliers, self.gold, self.primary,
-          self.domain, self.k, psd, self.pval)
+          self.domain, self.k, psd, self.pval,
+          parallel_file=parallel_file)
     else:
       corr_fcn = CORRELATION_FUNCTIONS[self.corr_fcn]
       corrs = data.GetCorrelations(
@@ -163,7 +164,8 @@ class Task:
           metric_format='spreadsheet')
       res = data.CompareMetrics(
           corrs, corr_fcn, self.avg_by, self.k, psd, self.pval,
-          self.replace_nans_with_zeros, self.perm_test, **self.corr_fcn_args)
+          self.replace_nans_with_zeros, self.perm_test,
+          parallel_file=parallel_file, **self.corr_fcn_args)
     return TaskResults(self, res)
 
 
@@ -211,10 +213,11 @@ class TaskResults:
     if isinstance(m2, str): m2 = self.metrics.index(m2)
     return self.matrix[m1, m2] < self.pval
 
-  def Str(self):
+  def Str(self, probs=False):
     """Return a string representation."""
     fh = io.StringIO()
-    data.PrintMetricComparison(self.corr_ranks, self.matrix, self.pval, file=fh)
+    data.PrintMetricComparison(
+        self.corr_ranks, self.matrix, self.pval, file=fh, probs=probs)
     return fh.getvalue()
 
   def Write(self, file):

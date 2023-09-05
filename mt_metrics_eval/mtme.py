@@ -162,6 +162,9 @@ flags.DEFINE_bool(
     '--matrix_* flags, along with --gold, --avg, --k, --k_block, --early_min, '
     '--early_max, --replace_nans_with_zeros, and --use_outliers.')
 flags.DEFINE_string(
+    'matrix_parallel', None,
+    'Parallelize metric comparisions, and use this value as a temp file name.')
+flags.DEFINE_string(
     'matrix_level', 'sys', 'Granularity, one of "sys", "doc" or "seg"')
 flags.DEFINE_string(
     'matrix_domain', None,
@@ -251,7 +254,7 @@ def PrintScores(evs):
 
 def Flag2TaskArg(flag_val, sets=False):
   """Convert gold and ref flag values to task arguments."""
-  if flag_val == 'std' or flag_val == 'None' or flag_val == '':
+  if flag_val == 'std' or flag_val == 'None' or not flag_val:
     return None
   vals = flag_val.split(',')
   if sets:
@@ -285,7 +288,7 @@ def PrintMatrix():
       perm_test=FLAGS.matrix_perm_test,
       corr_fcn_args=ast.literal_eval(FLAGS.matrix_corr_args)
   )
-  task_results = task.Run()
+  task_results = task.Run(parallel_file=FLAGS.matrix_parallel)
   fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
   with fh:
     fh.write(task_results.name + '\n')

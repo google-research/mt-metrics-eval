@@ -14,6 +14,7 @@
 # limitations under the License.
 """Access to standard datasets."""
 
+import ast
 import collections
 import copy
 import itertools
@@ -22,10 +23,13 @@ import sys
 import tarfile
 from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple, Union
 import urllib.request
+import apache_beam as beam
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
 import numpy as np
+
 import glob
+
 
 
 
@@ -675,6 +679,7 @@ def CompareMetrics(
     pval: float = 0.05,
     replace_nans_with_zeros: bool = False,
     perm_test: str = 'scores',
+    parallel_file: str = None,
     **corr_fcn_args,
     ) -> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using a given correlation function.
@@ -715,6 +720,10 @@ def CompareMetrics(
       latter case, corr_fcn is ignored, and the 'variant' and 'sample_rate'
       flags from corr_fcn_args are interpreted as arguments to
       KendallWithTiesOpt.
+    parallel_file: If not None, the significance matrix will be computed in
+      parallel using beam, with this value as the name of a temporary file for
+      beam output.
+
     **corr_fcn_args: Optional extra arguments to corr_fcn.
 
   Returns:
@@ -750,7 +759,7 @@ def CompareMetrics(
   # Compute significance matrix and determine ranks.
   sig_matrix = ComputeSigMatrix(
       metric_corrs, corrs_and_ranks, corr_fcn, average_by, k,
-      psd, replace_nans_with_zeros, perm_test, **corr_fcn_args)
+      psd, replace_nans_with_zeros, perm_test, parallel_file, **corr_fcn_args)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -771,6 +780,7 @@ def CompareMetricsWithGlobalAccuracy(
     psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
     pval: float = 0.05,
     extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
+    parallel_file: str = None,
     )-> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
   """Compare a set of metrics using accuracy.
 
@@ -804,6 +814,9 @@ def CompareMetricsWithGlobalAccuracy(
       evalset in evs_list. Each dict should map metric names to dicts containing
       scores for all systems, at system-level granularity (ie, scores are
       single-element lists).
+    parallel_file: If not None, the significance matrix will be computed in
+      parallel using beam, with this value as the name of a temporary file for
+      beam output.
 
   Returns:
     Tuple of (metric->(corr,rank), significance matrix). This is in the same
@@ -856,7 +869,8 @@ def CompareMetricsWithGlobalAccuracy(
 
   # Compute significance matrix and determine ranks.
   sig_matrix = ComputeSigMatrix(
-      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False, 'scores')
+      merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False, 'scores',
+      parallel_file)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
@@ -873,6 +887,7 @@ def ComputeSigMatrix(
     psd: stats.PermutationSigDiffParams,
     replace_nans_with_zeros: bool,
     perm_test: str,
+    parallel_file: str = None,
     **corr_fcn_args,
 ) -> np.ndarray:
   """Populate significance matrix using PermutationSigDiff with given args."""
@@ -886,25 +901,48 @@ def ComputeSigMatrix(
   elif perm_test != 'scores':
     raise ValueError(f'Bad perm_test value: {perm_test}')
 
-  n = len(corrs_and_ranks)
+  n, metrics = len(corrs_and_ranks), list(corrs_and_ranks)
   sig_matrix = np.zeros((n, n))
   if not k:
     return sig_matrix
-  for i in range(n):
-    m1 = list(corrs_and_ranks)[i]
-    for j in range(i + 1, n):
-      m2 = list(corrs_and_ranks)[j]
+
+  def ComputePval(metric1, metric2) -> Tuple[str, str, float]:
+    if perm_test == 'scores':
+      pval, _, _ = stats.PermutationSigDiff(
+          metric_corrs[metric2], metric_corrs[metric1], corr_fcn, average_by, k,
+          psd, replace_nans_with_zeros, **corr_fcn_args)
+    elif perm_test == 'pairs':
+      pval, _, _ = stats.PairwisePermutationSigDiff(
+          metric_corrs[metric2], metric_corrs[metric1], variant, average_by, k,
+          psd, sample_rate=sample_rate,
+          replace_nans_with_zeros=replace_nans_with_zeros)
+    else:
       pval = 0
-      if perm_test == 'scores':
-        pval, _, _ = stats.PermutationSigDiff(
-            metric_corrs[m2], metric_corrs[m1], corr_fcn, average_by, k,
-            psd, replace_nans_with_zeros, **corr_fcn_args)
-      elif perm_test == 'pairs':
-        pval, _, _ = stats.PairwisePermutationSigDiff(
-            metric_corrs[m2], metric_corrs[m1], variant, average_by, k,
-            psd, sample_rate=sample_rate,
-            replace_nans_with_zeros=replace_nans_with_zeros)
-      sig_matrix[i, j] = pval
+      assert False
+    return metric1, metric2, pval
+
+  if parallel_file is None:
+    for i in range(n):
+      for j in range(i + 1, n):
+        sig_matrix[i, j] = ComputePval(metrics[i], metrics[j])[2]
+  else:
+    todo = []
+    for i in range(n):
+      for j in range(i + 1, n):
+        todo.append((metrics[i], metrics[j]))
+    
+    with beam.Pipeline() as p:
+      _ = (p
+           | beam.Create(todo)
+           | beam.MapTuple(ComputePval)
+           | beam.CombineGlobally(beam.combiners.ToListCombineFn())
+           | beam.io.WriteToText(parallel_file, shard_name_template=''))
+    with open(parallel_file, 'r') as f:
+      line = f.read().strip()
+    for m1, m2, p in ast.literal_eval(line):
+      sig_matrix[metrics.index(m1), metrics.index(m2)] = p
+    os.remove(parallel_file)
+
   return sig_matrix
 
 
@@ -937,7 +975,8 @@ def AssignRanks(sig_matrix, pval):
   return ranks
 
 
-def PrintMetricComparison(ranks, matrix, pval=0.05, evs=None, file=sys.stdout):
+def PrintMetricComparison(
+    ranks, matrix, pval=0.05, evs=None, file=sys.stdout, probs=False):
   """Pretty print the output from CompareMetrics*()."""
   if not evs:
     max_len = max(len(m) for m in ranks)
@@ -945,8 +984,12 @@ def PrintMetricComparison(ranks, matrix, pval=0.05, evs=None, file=sys.stdout):
     max_len = max(len(evs.DisplayName(m)) for m in ranks)
   for i, metric in enumerate(ranks):
     s, r = ranks[metric]
-    sig = ' '.join(['.'] * (i + 1)) + ' '
-    sig += ' '.join('>' if p < pval else '=' for p in matrix[i][i + 1:])
+    if probs:
+      sig = ' '.join(['  .  '] * (i + 1)) + ' '
+      sig += ' '.join(f'{p:5.3f}' for p in matrix[i][i + 1:])
+    else:
+      sig = ' '.join(['.'] * (i + 1)) + ' '
+      sig += ' '.join('>' if p < pval else '=' for p in matrix[i][i + 1:])
     metric = evs.DisplayName(metric) if evs else metric
     print(f'{metric:<{max_len}} {r:>2} {s:10.7f}  {sig}', file=file)
 
