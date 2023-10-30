@@ -28,6 +28,8 @@ flags.DEFINE_string(
     'Major/Non-translation!:25 Minor/Fluency/Punctuation:0.1',
     'List of weight specs, in format: "severity[/category[/subcategory]]:wt". '
     'The most specific match is applied to each error.')
+flags.DEFINE_string(
+    'weights_sep', ' ', 'Separator character between items in weights lists.')
 flags.DEFINE_bool('unbabel', False, 'Input tsv is in Unbabel format.')
 flags.DEFINE_bool(
     'recompute_unbabel', False,
@@ -36,11 +38,15 @@ flags.DEFINE_bool(
 flags.DEFINE_bool(
     'force_contiguous', True,
     'Raise an error if annotated segments within a doc aren\'t contiguous')
+flags.DEFINE_string(
+    'doc_id', 'doc_id',
+    'Name of field containing 1-based id of segment within document')
 
 FLAGS = flags.FLAGS
 
 
 def Score(weights, items):
+  items = [x.lower() for x in items]
   while items:
     if '/'.join(items) in weights:
       return weights['/'.join(items)]
@@ -53,15 +59,15 @@ def main(argv):
     raise app.UsageError('Too many command-line arguments.')
 
   weights = {}
-  for e in FLAGS.weights.split():
+  for e in FLAGS.weights.split(FLAGS.weights_sep):
     c, w = e.split(':')
-    weights[c] = float(w)
+    weights[c.lower()] = float(w)
 
   scores = {}  # sys -> doc > doc_id -> rater -> [score]
   quoting = csv.QUOTE_MINIMAL if FLAGS.unbabel else csv.QUOTE_NONE
   with open(FLAGS.input) as f:
     for row in csv.DictReader(f, delimiter='\t', quoting=quoting):
-      system, doc, doc_id = row['system'], row['doc'], int(row['doc_id'])
+      system, doc, doc_id = row['system'], row['doc'], int(row[FLAGS.doc_id])
       if FLAGS.unbabel and not FLAGS.recompute_unbabel:
         score = json.loads(row['misc'])['mqm']
       else:

@@ -358,26 +358,31 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testPearsonNoAvgNoEarlyStop(self):
     delta = (pearson(self.metric2, self.gold)[0] -
              pearson(self.metric1, self.gold)[0])
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, c = stats.PermutationSigDiff(
         self.corr1, self.corr2, pearson, 'none', 1000)
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
     self.assertEqual(k, 1000)
+    self.assertEqual(len(c), 1000)  # pylint: disable=g-generic-assert
+    self.assertAlmostEqual(sum(c2 - c1 >= delta for c2, c1 in c) / 1000, p)
 
   def testPearsonNoAvgWithEarlyStop(self):
     delta = (pearson(self.metric2, self.gold)[0] -
              pearson(self.metric1, self.gold)[0])
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, c = stats.PermutationSigDiff(
         self.corr1, self.corr2, pearson, 'none', 1000,
         stats.PermutationSigDiffParams(block_size=50, early_max=0.2))
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
     self.assertLess(k, 1000)  # Fails with very low probabilty.
+    self.assertEqual(len(c), k)  # pylint: disable=g-generic-assert
+    self.assertAlmostEqual(sum(c2 - c1 >= delta for c2, c1 in c) / k, p)
 
   def testPearsonSysNoEarlyStop(self):
     cf = stats.AverageCorrelation(pearson, 4, average_by='sys')
     delta = cf(self.gold, self.metric2)[0] - cf(self.gold, self.metric1)[0]
-    p, d, k = stats.PermutationSigDiff(self.corr1, self.corr2, pearson, 'sys')
+    p, d, k, _ = stats.PermutationSigDiff(
+        self.corr1, self.corr2, pearson, 'sys')
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
     self.assertEqual(k, 1000)
@@ -386,7 +391,7 @@ class PermutationSigDiffTest(unittest.TestCase):
     cf = stats.AverageCorrelation(
         pearson, 4, average_by='sys', replace_nans_with_zeros=True)
     delta = cf(self.gold, self.metric2)[0] - cf(self.gold, self.metric1)[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, pearson, 'sys', replace_nans_with_zeros=True)
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
@@ -395,7 +400,8 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testPearsonItemNoEarlyStop(self):
     cf = stats.AverageCorrelation(pearson, 4, average_by='item')
     delta = cf(self.gold, self.metric2)[0] - cf(self.gold, self.metric1)[0]
-    p, d, k = stats.PermutationSigDiff(self.corr1, self.corr2, pearson, 'item')
+    p, d, k, _ = stats.PermutationSigDiff(
+        self.corr1, self.corr2, pearson, 'item')
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
     self.assertEqual(k, 1000)
@@ -403,14 +409,14 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testKendallItemWithEarlyStop(self):
     cf = stats.AverageCorrelation(kendall, 4, average_by='item')
     delta = cf(self.gold, self.metric2)[0] - cf(self.gold, self.metric1)[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, kendall, 'item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10))
     self.assertGreater(p, 0)
     self.assertAlmostEqual(d, delta)
     self.assertEqual(k, 10)
     # Factored version.
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, stats.KendallVariants, 'item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10))
     self.assertGreater(p, 0)
@@ -420,7 +426,7 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testKendallC(self):
     tau1 = self.corr1.Kendall(average_by='item', variant='c')[0]
     tau2 = self.corr2.Kendall(average_by='item', variant='c')[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, kendall, 'item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10), variant='c')
     self.assertGreater(p, 0)
@@ -430,7 +436,7 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testKendallVariants23(self):
     tau1 = self.corr1.KendallVariants(average_by='item', variant='23')[0]
     tau2 = self.corr2.KendallVariants(average_by='item', variant='23')[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, stats.KendallVariants, 'item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10), variant='23')
     self.assertGreater(p, 0)
@@ -440,7 +446,7 @@ class PermutationSigDiffTest(unittest.TestCase):
   def testKendallVariantsAcc23(self):
     tau1 = self.corr1.KendallVariants(average_by='item', variant='acc23')[0]
     tau2 = self.corr2.KendallVariants(average_by='item', variant='acc23')[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, stats.KendallVariants, 'item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10), variant='acc23')
     self.assertGreater(p, 0)
@@ -452,7 +458,7 @@ class PermutationSigDiffTest(unittest.TestCase):
         average_by='item', variant='acc23', sample_rate=1.0)[0]
     tau2 = self.corr2.KendallWithTiesOpt(
         average_by='item', variant='acc23', sample_rate=1.0)[0]
-    p, d, k = stats.PermutationSigDiff(
+    p, d, k, _ = stats.PermutationSigDiff(
         self.corr1, self.corr2, stats.KendallWithTiesOpt,
         average_by='item', k=10,
         params=stats.PermutationSigDiffParams(block_size=10),
@@ -473,16 +479,24 @@ class PairwisePermutationSigDiffTest(unittest.TestCase):
   def testKendallVariantsAcc23(self):
     tau1 = self.corr1.KendallWithTiesOpt('item', 'acc23', sample_rate=1.0)[0]
     tau2 = self.corr2.KendallWithTiesOpt('item', 'acc23', sample_rate=1.0)[0]
-    p, d, k = stats.PairwisePermutationSigDiff(
+    delta = tau2 - tau1
+    p, d, k, c = stats.PairwisePermutationSigDiff(
         self.corr1, self.corr2, 'acc23', 'item', k=10, sample_rate=1.0)
     self.assertGreater(p, 0)
-    self.assertAlmostEqual(d, tau2 - tau1)
+    self.assertAlmostEqual(d, delta)
     self.assertEqual(k, 10)
+    self.assertEqual(len(c), 10)  # pylint: disable=g-generic-assert
+
+    # Test can flake due to very small differences relative to delta, so use
+    # a tolerance of +- 3 when comparing null counts.
+    expected_null_count = p * k
+    null_count = sum(c2 - c1 >= delta for c2, c1 in c)
+    self.assertLessEqual(abs(null_count - expected_null_count), 3)
 
   def testKendallVariantsB(self):
     tau1 = self.corr1.KendallVariants('item', 'b', epsilon=1)[0]
     tau2 = self.corr2.KendallVariants('item', 'b', epsilon=1)[0]
-    _, d, k = stats.PairwisePermutationSigDiff(
+    _, d, k, _ = stats.PairwisePermutationSigDiff(
         self.corr1, self.corr2, 'b', 'item', k=10, epsilon1=1, epsilon2=1)
     self.assertAlmostEqual(d, tau2 - tau1)
     self.assertEqual(k, 10)

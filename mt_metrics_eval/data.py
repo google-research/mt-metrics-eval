@@ -681,7 +681,8 @@ def CompareMetrics(
     perm_test: str = 'scores',
     parallel_file: str = None,
     **corr_fcn_args,
-    ) -> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
+    ) -> Tuple[
+        Dict[str, Tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
   """Compare a set of metrics using a given correlation function.
 
   This function uses a permutation test to compute significant differences
@@ -735,6 +736,12 @@ def CompareMetrics(
        map. sig_matrix[i, j] contains the p-value for the null hypothesis that
        the correlation for metric j is >= the correlation for metric i. Only
        entries for which j > i are valid.
+    3. Draws index: a square numpy array with the same dimensions as sig_matrix,
+       draws_index[i, j] and draws_index[j, i] give the start and end+1 indexes
+       in draws_list for metric pair i, j, j > i.
+    4. Draws list: an K x 2 numpy array of resampling results. draws_list[k]
+       contains a pair of resampled correlations for metrics i, j as indicated
+       by draws_index.
   """
   assert metric_corrs
   assert average_by in ('none', 'item', 'sys'), 'Bad average_by value.'
@@ -757,14 +764,14 @@ def CompareMetrics(
       sorted(corrs_and_ranks.items(), key=lambda x: (-x[1][0], x[0])))
 
   # Compute significance matrix and determine ranks.
-  sig_matrix = ComputeSigMatrix(
+  sig_matrix, draws_index, draws_list = ComputeSigMatrix(
       metric_corrs, corrs_and_ranks, corr_fcn, average_by, k,
       psd, replace_nans_with_zeros, perm_test, parallel_file, **corr_fcn_args)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
 
-  return corrs_and_ranks, sig_matrix
+  return corrs_and_ranks, sig_matrix, draws_index, draws_list
 
 
 def CompareMetricsWithGlobalAccuracy(
@@ -781,7 +788,8 @@ def CompareMetricsWithGlobalAccuracy(
     pval: float = 0.05,
     extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
     parallel_file: str = None,
-    )-> Tuple[Dict[str, Tuple[float, float]], np.ndarray]:
+    )-> Tuple[
+        Dict[str, Tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
   """Compare a set of metrics using accuracy.
 
   This is a special case of CompareMetrics that uses pairwise accuracy
@@ -819,8 +827,8 @@ def CompareMetricsWithGlobalAccuracy(
       beam output.
 
   Returns:
-    Tuple of (metric->(corr,rank), significance matrix). This is in the same
-      format as CompareMetrics, except that metrics are DisplayName versions.
+    Same tuple as CompareMetrics. Metric names in the metric->(corr, rank) map
+    are DisplayName versions.
   """
   corrs, base_metrics = [], []
   if extern_metrics_list is None:
@@ -868,14 +876,14 @@ def CompareMetricsWithGlobalAccuracy(
       sorted(corrs_and_ranks.items(), key=lambda x: (-x[1][0], x[0])))
 
   # Compute significance matrix and determine ranks.
-  sig_matrix = ComputeSigMatrix(
+  sig_matrix, draws_index, draws_list = ComputeSigMatrix(
       merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False, 'scores',
       parallel_file)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
 
-  return corrs_and_ranks, sig_matrix
+  return corrs_and_ranks, sig_matrix, draws_index, draws_list
 
 
 def ComputeSigMatrix(
@@ -889,7 +897,7 @@ def ComputeSigMatrix(
     perm_test: str,
     parallel_file: str = None,
     **corr_fcn_args,
-) -> np.ndarray:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
   """Populate significance matrix using PermutationSigDiff with given args."""
 
   variant, sample_rate = 'acc23', 1.0
@@ -902,29 +910,40 @@ def ComputeSigMatrix(
     raise ValueError(f'Bad perm_test value: {perm_test}')
 
   n, metrics = len(corrs_and_ranks), list(corrs_and_ranks)
-  sig_matrix = np.zeros((n, n))
+  sig_matrix, draws_index = np.zeros((n, n)), np.zeros((n, n), dtype=np.int32)
+  draws_list = []  # List of paired correlations from resampling draws
   if not k:
-    return sig_matrix
+    return sig_matrix, draws_index, np.asarray(draws_list)
 
-  def ComputePval(metric1, metric2) -> Tuple[str, str, float]:
+  def ComputePval(
+      metric1, metric2
+  ) -> Tuple[str, str, float, list[Tuple[float, float]]]:
     if perm_test == 'scores':
-      pval, _, _ = stats.PermutationSigDiff(
+      pval, _, _, draws = stats.PermutationSigDiff(
           metric_corrs[metric2], metric_corrs[metric1], corr_fcn, average_by, k,
           psd, replace_nans_with_zeros, **corr_fcn_args)
     elif perm_test == 'pairs':
-      pval, _, _ = stats.PairwisePermutationSigDiff(
+      pval, _, _, draws = stats.PairwisePermutationSigDiff(
           metric_corrs[metric2], metric_corrs[metric1], variant, average_by, k,
           psd, sample_rate=sample_rate,
           replace_nans_with_zeros=replace_nans_with_zeros)
     else:
-      pval = 0
+      pval, draws = 0, None
       assert False
-    return metric1, metric2, pval
+    return metric1, metric2, pval, draws
+
+  def Collate(i, j, pval, draws):
+    """Collate results from i, j comparison."""
+    sig_matrix[i, j] = pval
+    draws_index[i, j] = len(draws_list)
+    draws_index[j, i] = len(draws_list) + len(draws)
+    draws_list.extend(draws)
 
   if parallel_file is None:
     for i in range(n):
       for j in range(i + 1, n):
-        sig_matrix[i, j] = ComputePval(metrics[i], metrics[j])[2]
+        _, _, pval, draws = ComputePval(metrics[i], metrics[j])
+        Collate(i, j, pval, draws)
   else:
     todo = []
     for i in range(n):
@@ -939,11 +958,11 @@ def ComputeSigMatrix(
            | beam.io.WriteToText(parallel_file, shard_name_template=''))
     with open(parallel_file, 'r') as f:
       line = f.read().strip()
-    for m1, m2, p in ast.literal_eval(line):
-      sig_matrix[metrics.index(m1), metrics.index(m2)] = p
+    for m1, m2, p, draws in ast.literal_eval(line):
+      Collate(metrics.index(m1), metrics.index(m2), p, draws)
     os.remove(parallel_file)
 
-  return sig_matrix
+  return sig_matrix, draws_index, np.asarray(draws_list)
 
 
 def AssignRanks(sig_matrix, pval):

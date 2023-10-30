@@ -15,7 +15,7 @@
 """Meta-information for standard datasets."""
 
 import dataclasses
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 
 @dataclasses.dataclass
@@ -29,6 +29,8 @@ class MetaInfo:
   # include both reference-based and reference-free versions, these must have
   # distinct basenames, eg MyMetric and MyMetric-QE.
   primary_metrics: Set[str]
+  # For backward compability, baselines should be a subset of primary metrics.
+  baseline_metrics: Optional[Set[str]] = None
 
 WMT19 = MetaInfo('ref', {'sys': 'wmt-z', 'seg': 'wmt-raw'}, set(), set())
 WMT20 = MetaInfo('ref', {'sys': 'wmt-z', 'doc': 'wmt-raw', 'seg': 'wmt-raw'},
@@ -70,7 +72,49 @@ WMT22_NODOMAIN = MetaInfo(
     {'sys': 'wmt-appraise', 'seg': 'wmt-appraise'},
     set(), WMT22_PRIMARIES)
 
+WMT23_PRIMARIES = {
+    'Calibri-COMET22', 'Calibri-COMET22-QE', 'cometoid22-wmt22', 'eBLEU',
+    'embed_llama', 'GEMBA-MQM', 'KG-BERTScore', 'MaTESe', 'MEE4', 'MetricX-23',
+    'MetricX-23-QE', 'mre-score-labse-regular', 'mbr-metricx-qe', 'sescoreX',
+    'tokengram_F', 'XCOMET-Ensemble', 'XCOMET-QE-Ensemble', 'XLsim',
+    'BERTscore', 'BLEU', 'BLEURT-20', 'chrF', 'COMET', 'CometKiwi',
+    'docWMT22CometDA', 'docWMT22CometKiwiDA', 'f200spBLEU', 'MS-COMET-QE-22',
+    'prismRef', 'prismSrc', 'Random-sysname', 'YiSi-1'
+}
+
+WMT23_BASELINES = {
+    'BERTscore', 'BLEU', 'BLEURT-20', 'chrF', 'COMET', 'CometKiwi',
+    'docWMT22CometDA', 'docWMT22CometKiwiDA', 'f200spBLEU', 'MS-COMET-QE-22',
+    'prismRef', 'prismSrc', 'Random-sysname', 'YiSi-1'
+}
+
+WMT23 = MetaInfo(
+    'refA',
+    {'sys': 'mqm', 'domain': 'mqm', 'seg': 'mqm'},
+    set(), WMT23_PRIMARIES, WMT23_BASELINES)
+
+WMT23_DA = MetaInfo(
+    'refA',
+    {'sys': 'da-sqm', 'domain': 'da-sqm', 'seg': 'da-sqm'},
+    set(), WMT23_PRIMARIES, WMT23_BASELINES)
+
 DATA = {
+    'wmt23': {
+        'en-de': dataclasses.replace(WMT23, outlier_systems={'synthetic_ref'}),
+        'he-en': dataclasses.replace(WMT23, std_ref='refB'),
+        'zh-en': dataclasses.replace(WMT23, outlier_systems={'synthetic_ref'}),
+        'cs-uk': WMT23_DA,
+        'de-en': WMT23_DA,
+        'en-cs': WMT23_DA,
+        'en-he': dataclasses.replace(WMT23_DA, std_gold={}, std_ref='refB'),
+        'en-ja': WMT23_DA,
+        'en-ru': dataclasses.replace(WMT23_DA, std_gold={}),
+        'en-uk': dataclasses.replace(WMT23_DA, std_gold={}),
+        'en-zh': WMT23_DA,
+        'ja-en': WMT23_DA,
+        'ru-en': dataclasses.replace(WMT23_DA, std_gold={}),
+        'uk-en': dataclasses.replace(WMT23_DA, std_gold={}),
+    },
     'wmt22': {
         'en-de': dataclasses.replace(WMT22, outlier_systems={'M2M100_1.2B-B4'}),
         'en-ru': WMT22,

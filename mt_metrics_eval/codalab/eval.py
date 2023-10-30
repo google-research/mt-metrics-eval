@@ -299,7 +299,7 @@ def read_sys_scores(filename: str):
         raise ValueError(f'Multiple metric names provided for {lp}')
       if ref != metrics[lp][1]:
         raise ValueError(
-            f'Metric has both source- and reference-baed versions for {lp}')
+            f'Metric has both source- and reference-based versions for {lp}')
       if sysname not in scores[lp]:
         scores[lp][sysname] = {}
       if domain in scores[lp][sysname]:

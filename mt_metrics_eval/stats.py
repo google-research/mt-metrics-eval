@@ -644,7 +644,7 @@ def PermutationSigDiff(
     params: PermutationSigDiffParams = PermutationSigDiffParams(),
     replace_nans_with_zeros: bool = False,
     **corr_fcn_args
-    ) -> tuple[float, float, int]:
+    ) -> tuple[float, float, int, list[tuple[float, float]]]:
   """Determine if there is a significant difference between two correlations.
 
   Uses the PERM-BOTH permutation test advocated by
@@ -672,6 +672,7 @@ def PermutationSigDiff(
     - p-value for correlation of metric2 > correlation of metric1
     - delta: corr_fcn(metric2) - corr_fcn(metric1)
     - k_used: number of resampling runs actually performed
+    - list of resampled (metric2, metric1) correlation pairs
   """
   lens, gold, mscores1, mscores2 = _ReshapeAndFilter(corr1, corr2, average_by)
   mscores1 = scipy.stats.zscore(mscores1)
@@ -707,6 +708,7 @@ def PermutationSigDiff(
         vals = np.asarray(vals)[~np.isnan(vals)]
       return np.average(vals) if len(vals) else 0
 
+  corrs = []
   delta = _Corr(mscores2) - _Corr(mscores1)
   i, large_delta_count = 1, 0
   for i in range(1, k + 1):
@@ -714,14 +716,16 @@ def PermutationSigDiff(
     w2 = 1 - w1
     m1 = w1 * mscores1 + w2 * mscores2
     m2 = w2 * mscores1 + w1 * mscores2
-    if _Corr(m2) - _Corr(m1) >= delta:
+    c1, c2 = _Corr(m1), _Corr(m2)
+    corrs.append((c2, c1))
+    if c2 - c1 >= delta:
       large_delta_count += 1
     if i % params.block_size == 0:
       pval = large_delta_count / i
       if pval < params.early_min or pval > params.early_max:
         break
 
-  return large_delta_count / i, delta, i
+  return large_delta_count / i, delta, i, corrs
 
 
 def PairwisePermutationSigDiff(
@@ -770,6 +774,7 @@ def PairwisePermutationSigDiff(
     - p-value for correlation of metric2 > correlation of metric1
     - delta: corr_fcn(metric2) - corr_fcn(metric1)
     - k_used: number of resampling runs actually performed
+    - list of resampled (metric2, metric1) correlation pairs
   """
   if variant == 'c':
     # tau-c depends on the actual metric scores, rather than just the pairwise
@@ -805,6 +810,7 @@ def PairwisePermutationSigDiff(
       vals = np.asarray(vals)[~np.isnan(vals)]
     return np.average(vals) if len(vals) else 0
 
+  corrs = []
   delta = _Corr(preprocs2) - _Corr(preprocs1)
   i, large_delta_count = 1, 0
   for i in range(1, k + 1):
@@ -817,14 +823,15 @@ def PairwisePermutationSigDiff(
       hybrids1.append(m1.Combine(m2, w1, w2))
       hybrids2.append(m2.Combine(m1, w1, w2))
 
-    if _Corr(hybrids2) - _Corr(hybrids1) >= delta:
+    c1, c2 = _Corr(hybrids1), _Corr(hybrids2)
+    corrs.append((c2, c1))
+    if c2 - c1 >= delta:
       large_delta_count += 1
       if i % params.block_size == 0:
         pval = large_delta_count / i
         if pval < params.early_min or pval > params.early_max:
           break
-
-  return large_delta_count / i, delta, i
+  return large_delta_count / i, delta, i, corrs
 
 
 def WilliamsSigDiff(corr1, corr2, corr_fcn, one_sided=True):

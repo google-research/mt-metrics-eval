@@ -99,7 +99,7 @@ flags.DEFINE_string(
 flags.DEFINE_string(
     'output', None, 'Output file, defaults to STDOUT.', short_name='o')
 flags.DEFINE_string(
-    'matrix_save', None, 'File for json output from --matrix option.')
+    'matrix_save', None, 'File for json/npgz output from --matrix option.')
 flags.DEFINE_string(
     'compare',
     None,
@@ -259,7 +259,7 @@ def Flag2TaskArg(flag_val, sets=False):
   vals = flag_val.split(',')
   if sets:
     # Limited to singleton sets.
-    vals = [set(v) for v in vals]
+    vals = [{v} for v in vals]
   return vals[0] if len(vals) == 1 else vals
 
 
@@ -294,8 +294,7 @@ def PrintMatrix():
     fh.write(task_results.name + '\n')
     fh.write(task_results.Str())
   if FLAGS.matrix_save:
-    with open(FLAGS.matrix_save, 'w') as fh:
-      task_results.Write(fh)
+    task_results.Save(FLAGS.matrix_save)
 
 
 def PrintCorrelation(evs, scorefile, tag, outfile):
@@ -384,7 +383,7 @@ def PrintComparison(res_base, res_comp, outfile):
     if not better:
       corr2, corr1 = corr1, corr2
     w = stats.WilliamsSigDiff(corr1, corr2, corr_wrapper)
-    p, _, _ = stats.PermutationSigDiff(
+    p, _, _, _ = stats.PermutationSigDiff(
         corr1, corr2, corr_fcn, FLAGS.avg, FLAGS.k,
         stats.PermutationSigDiffParams(
             FLAGS.k_block, FLAGS.early_min, FLAGS.early_max),

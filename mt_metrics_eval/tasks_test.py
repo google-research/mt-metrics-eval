@@ -14,7 +14,6 @@
 # limitations under the License.
 """Tests for stats."""
 
-import io
 from mt_metrics_eval import tasks
 import numpy as np
 import unittest
@@ -78,30 +77,59 @@ class TaskTest(unittest.TestCase):
     self.assertEqual(results.Rank('metricx_xxl_MQM_2020'), 1)
     self.assertAlmostEqual(results.Corr('REUSE[noref]'), 0.3296703)
 
+  def testNoDraws(self):
+    results = tasks.Task(k=0).Run()
+    n = len(results.metrics)
+    self.assertEqual(results.matrix.tolist(), np.zeros([n, n]).tolist())
+    self.assertEqual(results.draws_index.tolist(), np.zeros([n, n]).tolist())
+    self.assertEqual(results.draws_list.tolist(), [])
+    self.assertEqual(results.Draws(0, 1).tolist(), [])
+
+  def testOneDraw(self):
+    k = 1
+    results = tasks.Task(k=k).Run()
+    n = len(results.metrics)
+    for i in range(n):
+      for j in range(i + 1, n):
+        draws = results.Draws(i, j)
+        self.assertLen(draws, k)
+        corr_diff = results.Corr(i) - results.Corr(j)
+        self.assertGreaterEqual(corr_diff, 0)
+        null_prob = sum(a - b >= corr_diff for a, b in draws) / k
+        self.assertAlmostEqual(null_prob, results.matrix[i, j])
+
 
 class TaskResultsTest(unittest.TestCase):
 
+  # TODO(fosterg): Add test for Save/Load.
+
   def testAttrVals(self):
     task = tasks.Task()
-    res = tasks.TaskResults(task, (None, None))
+    res = tasks.TaskResults(task)
     attr_vals = res.attr_vals
     for attr in tasks.Attributes():
       self.assertEqual(attr_vals[attr], f'{task.StrVal(attr)}')
 
   def testResultsString(self):
     results = ({'m1': (0.111111111, 1), 'metric2': (0.222222222, 2)},
-               np.array([[0, 0.01], [0, 0]]))
+               np.array([[0, 0.01], [0, 0]]), None, None)
     res = tasks.TaskResults(tasks.Task(), results)
     self.assertEqual(
         res.Str(), 'm1       1  0.1111111  . >\nmetric2  2  0.2222222  . . \n')
 
-  def testWriteRead(self):
-    fh = io.StringIO()
-    res_out = tasks.Task(k=1).Run()
-    res_out.Write(fh)
-    fh.seek(0)
-    res_in = tasks.TaskResults().Read(fh)
-    self.assertEqual(res_out, res_in)
+  def testRange(self):
+    results = tasks.Task(k=0, corr_fcn='pearson').Run()
+    self.assertEqual(results.range, (-1, 1))
+
+    results = tasks.Task(k=0, corr_fcn='accuracy').Run()
+    self.assertEqual(results.range, (0, 1))
+
+    results = tasks.Task(k=0, corr_fcn='KendallWithTiesOpt').Run()
+    self.assertEqual(results.range, (0, 1))
+
+    results = tasks.Task(k=0, corr_fcn='KendallWithTiesOpt',
+                         corr_fcn_args={'variant': '23'}).Run()
+    self.assertEqual(results.range, (-1, 1))
 
 
 class TaskSetTest(unittest.TestCase):
@@ -147,13 +175,13 @@ class TaskSetTest(unittest.TestCase):
 
 class TaskSetResultsTest(unittest.TestCase):
 
-  def Results(self):
+  def Results(self, k=1):
     taskset = tasks.TaskSet(
-        {'lang': ['en-de,en-ru,zh-en']}, corr_fcn='accuracy', k=1)
+        {'lang': ['en-de,en-ru,zh-en']}, corr_fcn='accuracy', k=k)
     taskset += tasks.TaskSet(
-        {'lang': ['en-de', 'en-ru', 'zh-en'], 'corr_fcn': ['pearson']}, k=1)
+        {'lang': ['en-de', 'en-ru', 'zh-en'], 'corr_fcn': ['pearson']}, k=k)
     taskset += tasks.TaskSet(
-        {'lang': ['en-de', 'en-ru'], 'corr_fcn': ['kendall']}, k=1)
+        {'lang': ['en-de', 'en-ru'], 'corr_fcn': ['kendall']}, k=k)
     return taskset.Run()
 
   def testSplitByAttr(self):
@@ -189,6 +217,21 @@ class TaskSetResultsTest(unittest.TestCase):
     self.assertEqual(len(ranks), 21)  # pylint: disable=g-generic-assert
     self.assertEqual(list(ranks.values()), sorted(ranks.values()))
     self.assertTrue(all(r >= 1 for r in ranks.values()))
+
+  def testAverageCorrs(self):
+    results = self.Results()
+    corrs = results.AverageCorrs()
+    self.assertEqual(len(corrs), 21)  # pylint: disable=g-generic-assert
+    self.assertEqual(list(corrs.values()), sorted(corrs.values(), reverse=True))
+    self.assertTrue(all(c >= 0 and c <= 1 for c in corrs.values()))
+
+  def testAverageCorrMatrix(self):
+    # TODO(fosterg): More explicit test, including handling of variable-length
+    # draws.
+    results = self.Results(k=2)
+    corrs_ranks, sig_matrix = results.AverageCorrMatrix()
+    self.assertEqual(len(corrs_ranks), 21)  # pylint: disable=g-generic-assert
+    self.assertEqual(sig_matrix.shape, (21, 21))
 
 
 if __name__ == '__main__':
