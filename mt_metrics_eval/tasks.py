@@ -488,7 +488,7 @@ class TaskSetResults:
         for k, r in enumerate(self.results):
           b, e = r.range
           draws = weights[k] * (r.Draws(m1, m2) - b) / (e - b)
-          draws = draws[0] - draws[1]  # r.Draws() handles ordering changes.
+          draws = draws[:, 0] - draws[:, 1]  # r.Draws() handles order changes.
           # This task and metric pair might have fewer draws due to early
           # stopping, so repeat the actual draws to fill up the space.
           num_copies = int(np.ceil(max_draws / len(draws)))
