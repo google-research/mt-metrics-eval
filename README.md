@@ -7,7 +7,7 @@ It bundles data relevant to metric development and evaluation for a
 given test set and language pair, and lets you do the following:
 
 - Access source, reference, and MT output text, along with associated
-meta-info, for the WMT metrics tasks from 2019-2022. This can be done via
+meta-info, for the WMT metrics tasks from 2019-2023. This can be done via
 software, or by directly accessing the files in a linux directory
 structure, in a straightforward format.
 - Access human and automatic metric scores for the above data.
@@ -21,7 +21,7 @@ API.
 
 ## Installation
 
-You need python 3.8 or later. To install:
+You need python 3.9 or later. To install:
 
 ```bash
 git clone https://github.com/google-research/mt-metrics-eval.git
@@ -152,6 +152,11 @@ demonstrates how you can incorporate new metrics into these comparisons.
 The notebook `wmt22_metrics.ipynb` documents how the official results for the
 WMT22 task were generated. We will try to provide similar notebooks for future
 evaluations.
+
+The notebook `ties_matter.ipynb` contains the code to reproduce the results
+from [Ties Matter: Meta-Evaluating Modern Metrics with Pairwise Accuracy and Tie Calibration](https://arxiv.org/abs/2305.14324).
+It also contains examples for how to calculate the proposed pairwise accuracy
+with tie calibration.
 
 ## Scoring scripts
 
