@@ -92,7 +92,7 @@ class TaskTest(unittest.TestCase):
     for i in range(n):
       for j in range(i + 1, n):
         draws = results.Draws(i, j)
-        self.assertLen(draws, k)
+        self.assertEqual(len(draws), k)  # pylint: disable=g-generic-assert
         corr_diff = results.Corr(i) - results.Corr(j)
         self.assertGreaterEqual(corr_diff, 0)
         null_prob = sum(a - b >= corr_diff for a, b in draws) / k
