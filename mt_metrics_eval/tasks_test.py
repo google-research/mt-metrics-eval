@@ -234,5 +234,29 @@ class TaskSetResultsTest(unittest.TestCase):
     self.assertEqual(sig_matrix.shape, (21, 21))
 
 
+class MetricsTableTest(unittest.TestCase):
+
+  def Columns(self):
+    return [
+        {'m1': (0.9, 1), 'm2': (0.8, 1), 'm3': (0.5, 2)},
+        {'m1': (0.5, 1), 'm2': (-0.2, 2)},
+        {'m1': (0.2, 2), 'm3': (0.5, 1)},
+    ]
+
+  def testSmoke(self):
+    for metrics in ['m1', 'm2', 'm3'], ['m3', 'm1']:
+      for headers in [], [['m', 'a', 'b', 'c']]:
+        for fmt in 'tsv', 'text', 'latex':
+          for which in 'listed', 'union', 'intersection':
+            for rerank in None, [True, False, True]:
+              tasks.MetricsTable(
+                  metrics=metrics,
+                  columns=self.Columns(),
+                  column_headers=headers,
+                  fmt=fmt,
+                  which_metrics=which,
+                  rerank=rerank)
+
+
 if __name__ == '__main__':
   unittest.main()

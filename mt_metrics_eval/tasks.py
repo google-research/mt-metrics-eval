@@ -65,6 +65,201 @@ def MatrixString(corr_ranks, matrix, pval=0.05, probs=False):
   return fh.getvalue()
 
 
+def _FormatMetric(basename, status, noref):
+  status_str = {'primary': '', 'contrastive': '*', 'baseline': '_'}
+  noref_str = {True: '[noref]', False: ''}
+  return f'{status_str[status]}{basename}{noref_str[noref]}'
+
+
+def _TsvTable(metric_infos, rows, headers) -> str:
+  """TSV-formatted table, helper for MetricsTable."""
+  metrics = [_FormatMetric(m, s, r) for m, s, r in metric_infos]
+  ret = ''
+  for row in headers:
+    ret += '\t'.join(row[:1] + [x + '\t' for x in row[1:-1]] + row[-1:]) + '\n'
+  for m, row in zip(metrics, rows):
+    row = [m] + ['--\t--' if r is None else f'{r:d}\t{c:f}' for c, r in row]
+    ret += '\t'.join(row) + '\n'
+  return ret
+
+
+def _TextTable(metric_infos, rows, headers, rerank) -> str:
+  """Text-formatted table, helper for MetricsTable."""
+
+  def FormatCorrRank(corr, rank, rank_last):
+    if corr is None: return '--'
+    return f'{corr:6.3f} ({rank})' if rank_last else f'{rank}{corr:6.3f}'
+
+  metrics = [_FormatMetric(m, s, r) for m, s, r in metric_infos]
+  row_strs = []
+  for m, row in zip(metrics, rows):
+    row_str = [FormatCorrRank(c, r, rr) for (c, r), rr in zip(row, rerank)]
+    row_strs.append([m] + row_str)
+  col_widths = []
+  for i in range(len(row_strs[0])):
+    rjust = 1 if i > 0 and not rerank[i - 1] else -1
+    col_widths.append(rjust * max(len(s[i]) for s in headers + row_strs))
+  ret = ''
+  def _Just(s, w):
+    return f'{s:>{w}}' if w >= 0 else f'{s:<{-w}}'
+  for header in headers:
+    ret += '  '.join(_Just(h, w) for h, w in zip(header, col_widths)) + '\n'
+  if headers:
+    ret += '  '.join('-' * abs(w) for w in col_widths) + '\n'
+  for row in row_strs:
+    ret += '  '.join(_Just(r, w) for r, w in zip(row, col_widths)) + '\n'
+  return ret
+
+
+def _LatexTable(metric_infos, rows, headers, rerank) -> str:
+  """Latex-formatted table, helper for MetricsTable."""
+
+  def FormatCorrRank(corr, rank, rank_last):
+    if corr is None: return '-- & --'
+    bold = rank == 1
+    corr = f'{corr:0.3f}'
+    rank = f'({rank:d})' if rank_last else f'{rank:d}'
+    if bold:
+      corr, rank = f'\\textbf{{{corr}}}', f'\\textbf{{{rank}}}'
+    return f'{corr} & {rank}' if rank_last else f'{rank} & {corr}'
+
+  def Esc(s):
+    return s.replace('_', '\\_')
+
+  metrics = []
+  for metric, status, noref in metric_infos:
+    metric = Esc(metric)
+    star = '*' if noref else ''
+    if status == 'primary':
+      metric = f'{metric}{star}'
+    elif status == 'baseline':
+      metric = f'\\underline{{{metric}}}{star}'
+    elif status == 'contrastive':
+      metric = f'\\textit{{{metric}}}{star}'
+    else:
+      metric = f'{metric}{star}'
+    metrics.append(metric)
+
+  sep, eol = ' & ', ' \\\\'
+  ret = ''
+  ret += '\\begin{tabular}{l' + '|rr' * len(rows[0]) + '}\n\\toprule\n'
+  for h in headers:
+    h = [Esc(x) for x in h]
+    ret += h[0] + sep + sep.join(
+        [f'\\multicolumn{{2}}{{|l}}{{{x}}}' for x in h[1:]])
+    ret += eol + '\n'
+  if headers: ret += '\\midrule\n'
+  for metric, row in zip(metrics, rows):
+    row_str = [FormatCorrRank(c, r, rr) for (c, r), rr in zip(row, rerank)]
+    ret += f'{metric} & ' + ' & '.join(row_str) +  eol + '\n'
+  ret += '\\bottomrule\n\\end{tabular}\n'
+  return ret
+
+
+def MetricsTable(
+    metrics: list[str],
+    columns: list[dict[str, tuple[float, int]]],
+    column_headers: list[list[str]],
+    fmt: str = 'text',
+    which_metrics: str = 'listed',
+    rerank: list[bool] | None = None,
+    baselines_metainfo: meta_info.MetaInfo | None = None,
+) -> str:
+  """Generate a tabular string representation for a set of metric stats.
+
+  Args:
+    metrics: A list of metric names that determines the order in which metrics
+      are displayed in the leftmost column of the table.
+    columns: Mappings from metric name to (correlation, rank) values, the
+      content to display in the second and subsequent columns in the table.
+    column_headers: A list of 0 or more rows to use as column headers. Each row
+      must contain headers for the first metric-name column, followed by each
+      column in the columns arg. Header rows are stacked vertically.
+    fmt: Format to use for the table: one of 'tsv', 'text', or 'latex'. The
+      latex format produces a tabular entity that uses top/mid/bottomrule
+      commands from the booktabs package.
+    which_metrics: Determines the set of metrics that appear in the leftmost
+      column of the table. If 'listed', exactly those in the metrics arg; if
+      'intersection', the intersection of the metrics arg with the metrics in
+      all columns; if 'union', the union of the metrics arg with the metrics in
+      all columns. Metrics not in the metrics arg are placed in alphabetical
+      order at the bottom of the table.
+    rerank: For each column, display the rank order of each metric relative to
+      the other metrics in the column instead of the metrics' original ranks
+      from the columns arg. These can differ if the original ranks indicate
+      significance clusters or if they pertain to a larger set of metrics. This
+      option also triggers a different display if fmt is 'text' or 'latex':
+      "corr (rank)" versus the default "rank corr". A None value sets rerank to
+      False for all columns.
+    baselines_metainfo: MetaInfo object used to determine whether a metric is a
+      baseline for display purposes. If None, baseline status of metrics isn't
+      indicated.
+
+  Returns:
+    A string representation of the data in the desired format.
+  """
+  # Checks
+  assert metrics
+  assert columns
+  for h in column_headers:
+    assert len(h) == len(columns) + 1
+  assert fmt in {'tsv', 'text', 'latex'}, fmt
+  assert which_metrics in {'listed', 'intersection', 'union'}, which_metrics
+  if rerank:
+    assert len(rerank) == len(columns)
+
+  if not rerank:
+    rerank = [False] * len(columns)
+
+  # Build ordered list of metrics to show results for.
+  metrics = metrics.copy()
+  if which_metrics == 'intersection':
+    metrics_set = set.intersection(*[set(metrics)] + [set(c) for c in columns])
+    metrics = [m for m in metrics if m in metrics_set]
+  elif which_metrics == 'union':  # Append metrics not in given list
+    metrics_set = set.union(*[set(metrics)] + [set(c) for c in columns])
+    metrics += sorted([m for m in metrics_set if m not in metrics])
+
+  # Sort ranks in columns if called for.
+  new_columns = []
+  for rr, col in zip(rerank, columns):
+    if rr:
+      col = sorted(
+          (x for x in col.items() if x[0] in metrics), key=lambda x: -x[1][0])
+      col = {m: (c, r + 1) for r, (m, (c, _)) in enumerate(iterable=col)}
+    new_columns.append(col)
+  columns = new_columns
+
+  # Extract meta-info from metrics list
+  metric_infos = []
+  for metric in metrics:
+    if metric.endswith('[noref]'):
+      metric, noref = metric[:-len('[noref]')], True
+    else:
+      noref = False
+    if metric.startswith('*'):
+      metric, status = metric[1:], 'contrastive'
+    else:
+      status = 'primary'
+      if baselines_metainfo and metric in baselines_metainfo.baseline_metrics:
+        status = 'baseline'
+    metric_infos.append((metric, status, noref))
+
+  # Convert columns to rows with None's for missing entries
+  rows = []
+  for m in metrics:
+    rows.append([c[m] if m in c else (None, None) for c in columns])
+
+  if fmt == 'tsv':
+    return _TsvTable(metric_infos, rows, column_headers)
+  elif fmt == 'text':
+    return _TextTable(metric_infos, rows, column_headers, rerank)
+  elif fmt == 'latex':
+    return _LatexTable(metric_infos, rows, column_headers, rerank)
+  else:  # keep lint happy
+    return ''
+
+
 @dataclasses.dataclass()
 class Task:
   """Parameters for data.GetCorrelations and data.CompareMetrics*."""
@@ -334,8 +529,22 @@ class TaskSet:
   def Append(self, task: Task):
     self.tasks.append(task)
 
-  def Run(self) -> TaskSetResults:
-    """Run all tasks."""
+  def Run(self,
+          eval_set_dict: dict[tuple[str, str], data.EvalSet] | None = None
+          ) -> TaskSetResults:
+    """Run all tasks.
+
+    Args:
+      eval_set_dict: Maps (test-set, lp) pairs to EvalSets. This can be used to
+        modify EvalSets, for instance by controlling the metrics that will be
+        evaluated using AddMetricsFromDir() or AddMetric(). Any (test-set, lp)
+        combinations missing from eval_set_dict will be added automatically.
+
+    Returns:
+      TaskSetResults object containing results of this run.    
+    """
+    if eval_set_dict:
+      self.eval_set_dict = eval_set_dict.copy()
     self._BuildEvalSetDict()
     return TaskSetResults([task.Run(self.eval_set_dict) for task in self.tasks])
 
@@ -447,7 +656,7 @@ class TaskSetResults:
 
   def AverageCorrMatrix(
       self, weights=None, pval=0.05
-  ) -> tuple[dict[str, tuple[float, float]], np.ndarray]:
+  ) -> tuple[dict[str, tuple[float, int]], np.ndarray]:
     """Compute a significance matrix over average correlations.
 
     This first computes the average correlations for metrics that exist in
@@ -501,3 +710,118 @@ class TaskSetResults:
     ranks = data.AssignRanks(sig_matrix, pval)
     corrs_and_ranks = {m: (c, r) for (m, c), r in zip(avg_corrs.items(), ranks)}
     return corrs_and_ranks, sig_matrix
+
+  def Table(
+      self,
+      metrics: list[str] | None = None,
+      initial_column: dict[str, tuple[float, int | float]] | None = None,
+      initial_column_header: str = '',
+      task_indices: list[int] | None = None,
+      attr_list: list[str] | None = None,
+      nicknames: dict[str, str] | None = None,
+      fmt: str = 'text',
+      which_metrics: str = 'listed',
+      rerank: list[bool] | None = None,
+      baselines_metainfo: meta_info.MetaInfo | None = None,
+  ) -> str:
+    """Generate a tabular string representation for current contents.
+
+    This is a convenience wrapper around MetricsTable. By default it generates
+    a table whose rows are metrics and whose columns are correlation and rank
+    statistics for each task.
+
+    Args:
+      metrics: A list of metric names that determines the order in which metrics
+        are displayed in the leftmost column of the table. If not supplied, the
+        list is taken from the initial_column arg if present, otherwise from the
+        first TaskResults. 
+      initial_column: Optional initial column, a mapping from metric names to
+        correlation stats and optional ranks.
+      initial_column_header: Header for initial column.
+      task_indices: Indices of tasks to display, integers in 1..len+1. The
+        default is to display all tasks.
+      attr_list: Optional attributes to display above the tasks, in successive
+        rows of headers. These are always followed by a line showing task ids.
+      nicknames: Nicknames for attribute values, eg KendallWithTiesOpt -> acc-t.
+      fmt: Format to use for the table: one of 'tsv', 'text', or 'latex'.
+      which_metrics: One of 'listed', 'intersection', or 'union'. See doc for
+        MetricsTable.
+      rerank: Re-rank individual columns, as described in MetricsTable. The
+        default is to not re-rank.
+      baselines_metainfo: MetaInfo object used to determine whether a metric is
+        a baseline for display purposes. If None, baseline status of metrics
+        isn't indicated.
+
+    Returns:
+      A string representation of the results.
+    """
+    if not self.results:
+      return ''
+
+    columns = []
+    if initial_column:
+      if not isinstance(list(initial_column.values())[0], tuple):
+        vals = sorted((-c, m) for m, c in initial_column.items())
+        initial_column = {m: (-c, r + 1) for r, (c, m) in enumerate(vals)}
+      columns.append(initial_column)
+    if not task_indices:
+      task_indices = range(1, len(self.results) + 1)
+    for i in task_indices:
+      columns.append(self.results[i - 1].corr_ranks)
+
+    if not metrics:
+      metrics = list(columns[0])
+
+    headers = []
+    def Nn(val):
+      return nicknames[val] if nicknames and val in nicknames else val
+    if attr_list is None: attr_list = []
+    for attr in attr_list:
+      row = [f'{attr}:', ''] if initial_column else [f'{attr}:']
+      row += [Nn(self.results[i - 1].attr_vals[attr]) for i in task_indices]
+      headers.append(row)
+    row = ['metric', initial_column_header] if initial_column else ['metric']
+    row += [f'task{i}' for i in task_indices]
+    headers.append(row)
+
+    return MetricsTable(
+        metrics, columns, headers, fmt, which_metrics, rerank,
+        baselines_metainfo)
+
+
+def WMT23(lps: list[str] | None = None, primary=True, k=0, gold=None):
+  """Generate the WMT23 task set and associated weight vector."""
+
+  # Not strictly necessary to declare this, because setting human=True will
+  # only score human outputs if any are  available, but we want to make the
+  # human attribute reflect what actually got used, and also want to avoid
+  # having to load the EvalSets at this point to get this info automatically.
+  lps_with_multiple_refs = {'en-he', 'he-en'}
+
+  def Add(lp, level, corr_fcn, human, gold, **kw_args):
+    tasks.Append(Task(
+        'wmt23', lp, level=level, corr_fcn=corr_fcn, human=human, gold=gold,
+        primary=primary, k=k, **kw_args))
+
+  if lps is None: lps = ['en-de', 'he-en', 'zh-en']
+  lps = sorted(lps)
+
+  tasks = TaskSet()
+
+  # 1st task is pairwise accuracy across all lps.
+  Add(','.join(lps), 'sys', 'accuracy',
+      human=bool(lps_with_multiple_refs & set(lps)),
+      gold=[gold] * len(lps) if gold else None)
+
+  # System- and segment-level Pearson, and segment-level accuracy for all lps.
+  for lp in lps:
+    human = lp in lps_with_multiple_refs
+    Add(lp, 'sys', 'pearson', human, gold)
+    Add(lp, 'seg', 'pearson', human, gold)
+    Add(lp, 'seg', 'KendallWithTiesOpt', human, gold,
+        avg_by='item', perm_test='pairs', corr_fcn_args={'sample_rate': 1.0})
+
+  weights = [len(lps)] + [1] * (len(tasks) - 1)
+  weights = [w / sum(weights) for w in weights]
+
+  return tasks, weights

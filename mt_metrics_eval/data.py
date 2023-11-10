@@ -79,6 +79,7 @@ class EvalSet:
       info = meta_info.DATA[name][lp]
     self.info = copy.deepcopy(info)
     self._std_human_scores = self.info.std_gold
+    self._primary_metrics = self.info.primary_metrics.copy()
 
     self._ReadDataset(name, lp, read_stored_metric_scores, path, strict)
 
@@ -151,21 +152,21 @@ class EvalSet:
 
   @property
   def metric_names(self) -> Set[str]:
-    """Full names of different metrics available."""
+    """Full names of available metrics, eg BLEU-refA, COMET-refB."""
     return self._metric_names
 
   @property
   def metric_basenames(self) -> Set[str]:
-    """Basenames of different metrics available."""
+    """Basenames of available metrics, eg BLEU, COMET."""
     return self._metric_basenames
 
   @property
   def primary_metrics(self) -> Set[str]:
     """Base names of primary metrics, empty set if none."""
-    return self.info.primary_metrics
+    return self._primary_metrics
 
   def BaseMetric(self, metric_name: str) -> str:
-    """Base name for a given metric."""
+    """Base name for a given metric, eg BLEU for BLEU-refA."""
     return self.ParseMetricName(metric_name)[0]
 
   def DisplayName(self, metric_name: str, fmt='spreadsheet') -> str:
@@ -313,6 +314,79 @@ class EvalSet:
       refset = set(refs.split('.'))
     return basename, refset
 
+  def SetPrimaryMetrics(self, metrics: set[str]):
+    """Set primary metrics to the given set of basenames. Reset if empty."""
+    if metrics:
+      self._primary_metrics = metrics.copy()
+    else:
+      self._primary_metrics = self.info.primary_metrics.copy()
+
+  def AddMetricsFromDir(self, dir_name, repair=False, replace=False):
+    """Add metrics from files in a directory.
+
+    This can be used to add new metrics post-construction. It is not affected
+    by the read_stored_metric_scores flag, so you can construct an EvalSet with
+    no metrics, then add metrics from an arbitrary directory using this
+    function. Any files that end in .score will be interpreted as metrics, and
+    must adhere to the conventions described in the README.
+
+    Args:
+      dir_name: Name of directory containing files of the form
+        NAME-REF.LEVEL.score whose contents are to be added. Metric names must
+        not overlap with existing metrics unless replace is True.
+      repair: Replace missing scores with 0s, see CheckScores().
+      replace: If True, overwrite scores for any existing metric with the same
+        name.
+    """
+    for filename in glob.glob(os.path.join(dir_name, '*.score')):
+      name, level = self.ParseMetricFilename(filename)
+      basename, refs = self.ParseMetricName(name)
+      if level == 'domain':
+        scores = ReadDomainScoreFile(filename, self.domain_names)
+      else:
+        scores = ReadScoreFile(filename)
+      self.AddMetric(basename, refs, level, scores, repair, replace)
+
+  def AddMetric(
+      self,
+      basename: str,
+      refs: set[str],
+      level: str,
+      scores: dict[str, list[float]],
+      repair: bool = False,
+      replace: bool = False):
+    """Add a new metric to the EvalSet.
+
+    Args:
+      basename: Basename of metric to add (eg BLEU, not BLEU-refA). Must not
+        already exist at this level unless replace is True.
+      refs: Reference(s) used by the metric, a subset of self.ref_names, or the
+        empty set to indicate a source-based metric.
+      level: Granularity, one of 'sys', 'domain', 'doc', or 'seg'.
+      scores: Mapping from each system name to correctly ordered list of scores,
+        a singleton list if level is 'sys', otherwise the order in which items
+        occur in self.domains, self.docs, or self.src.
+      repair: Replace missing scores with 0s, see CheckScores().
+      replace: If True, overwrite scores for any existing metric with the same
+        name.
+    """
+    if not refs.issubset(self.ref_names):
+      raise ValueError(f'Bad reference(s) for metric {basename}: {refs}')
+    if refs == self.ref_names and len(refs) >= 3:
+      refs = 'all'
+    name = MakeMetricName(basename, refs)
+
+    if level not in self._scores:
+      self._scores[level] = {}
+    if name in self._scores[level]:
+      if not replace:
+        raise ValueError(f'Duplicate metric name {name} at {level} level')
+    else:
+      self._metric_names.add(name)
+      self._metric_basenames.add(basename)
+    self._scores[level][name] = scores
+    self.CheckScores(self._scores[level][name], name, level, False, repair)
+
   def CheckScores(self, scores_map, scorer_name, level, human, repair=False):
     """Check and optionally repair scores returned by ReadScoreFile.
 
@@ -424,37 +498,21 @@ class EvalSet:
             filename, self.domain_names)
       else:
         self._scores[level][scorer] = ReadScoreFile(filename)
+      self.CheckScores(
+          self._scores[level][scorer], scorer, level, True, repair=not strict)
 
     self._metric_names = set()
     self._metric_basenames = set()
     if read_stored_metric_scores:
       for md in metric_scores_paths:
-        md = os.path.join(md, name)
-        for filename in glob.glob(
-            os.path.join(md, 'metric-scores', lp, '*.score')):
-          scorer, level = self.ParseMetricFilename(filename)
-          if level not in self._scores:
-            self._scores[level] = {}
-          assert scorer not in self._scores[level]
-          assert self.ReferencesUsed(scorer).issubset(self.ref_names)
-          self._metric_names.add(scorer)
-          self._metric_basenames.add(self.BaseMetric(scorer))
-          if level == 'domain':
-            self._scores[level][scorer] = ReadDomainScoreFile(
-                filename, self.domain_names)
-          else:
-            self._scores[level][scorer] = ReadScoreFile(filename)
+        md = os.path.join(md, name, 'metric-scores', lp)
+        self.AddMetricsFromDir(md, repair=not strict)
 
     # Check contents
     for txt in self.all_refs.values():
       assert len(txt) == len(self.src), f'Bad length for reference {txt}'
     for txt in self.sys_outputs.values():
       assert len(txt) == len(self.src), f'Bad length for output {txt}'
-    for level in self._scores:
-      for scorer_name, scores_map in self._scores[level].items():
-        self.CheckScores(scores_map, scorer_name, level,
-                         scorer_name in self.human_score_names,
-                         repair=not strict)
 
 
 def _MapPositions(item_list, contiguous=False):
@@ -1011,6 +1069,19 @@ def PrintMetricComparison(
       sig += ' '.join('>' if p < pval else '=' for p in matrix[i][i + 1:])
     metric = evs.DisplayName(metric) if evs else metric
     print(f'{metric:<{max_len}} {r:>2} {s:10.7f}  {sig}', file=file)
+
+
+def MakeMetricName(basename, refs):
+  """Make metric full name from basename and references used (not checked)."""
+  if isinstance(refs, str):
+    refs = {refs}
+  if refs == {'all'}:
+    ref_string = 'all'  # reserved for using all references
+  elif refs:
+    ref_string = '.'.join(refs)
+  else:
+    ref_string = 'src'
+  return f'{basename}-{ref_string}'
 
 
 # pylint: disable=unused-argument

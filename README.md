@@ -149,9 +149,9 @@ use the API to load and summarize data, and compare stored metrics (ones that
 participated in the metrics shared tasks) using different criteria. It also
 demonstrates how you can incorporate new metrics into these comparisons.
 
-The notebook `wmt22_metrics.ipynb` documents how the official results for the
-WMT22 task were generated. We will try to provide similar notebooks for future
-evaluations.
+The notebooks `wmt22_metrics.ipynb` and `wmt23_metrics.ipynb` document how the
+official results for these tasks were generated.
+We will try to provide similar notebooks for future evaluations.
 
 The notebook `ties_matter.ipynb` contains the code to reproduce the results
 from [Ties Matter: Meta-Evaluating Modern Metrics with Pairwise Accuracy and Tie Calibration](https://arxiv.org/abs/2305.14324).
