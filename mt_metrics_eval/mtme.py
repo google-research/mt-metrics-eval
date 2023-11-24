@@ -49,6 +49,7 @@ mtme --matrix -t wmt20 -l en-de -g mqm --k 100
 """
 
 import ast
+import os
 import sys
 from absl import app
 from absl import flags
@@ -204,7 +205,20 @@ flags.DEFINE_string(
     'matrix_corr_args', '{}',
     'Extra arguments to the matrix_corr function, a string that can be '
     'converted to a python dict, eg \'{"variant": "acc23", "epsilon": 10}\'.')
-
+flags.DEFINE_list(
+    'set_primary_metrics', None,
+    'List of basenames of metrics to consider primary, for example '
+    '"BLEU,BLEURT-20,COMET". This can be used in conjunction with '
+    '--matrix_primary to reduce the number of expensive metric pairwise '
+    'comparisons that need to be made.')
+flags.DEFINE_string(
+    'add_metrics_from_dir', None,
+    'Directory containing metric score files to add to existing metrics. This '
+    'may be a lower-level directory that directly contains .score files, or a '
+    'higher-level directory that contains language-pair sub-directories that '
+    'contain .score files. The latter format must be used if --language_pair '
+    'is a comma-separated list. New metrics are added as primary submissions, '
+    'and must not have the same names as existing metrics.')
 
 FLAGS = flags.FLAGS
 
@@ -263,7 +277,27 @@ def Flag2TaskArg(flag_val, sets=False):
   return vals[0] if len(vals) == 1 else vals
 
 
-def PrintMatrix():
+def EvsDict(new_metric_dirs):
+  """Make a (testset, lp)->evs dict w/ added metrics, None if not necessary."""
+  if not new_metric_dirs and not FLAGS.primary_metrics:
+    return None
+  evs_dict = {}
+  num_metrics_added = 0
+  for lp in FLAGS.language_pair.split(','):
+    evs = data.EvalSet(FLAGS.test_set, lp, True)
+    evs_dict[(FLAGS.test_set, lp)] = evs
+    if FLAGS.set_primary_metrics:
+      evs.SetPrimaryMetrics(set(FLAGS.set_primary_metrics))
+    if lp in new_metric_dirs:
+      new_metrics = evs.AddMetricsFromDir(new_metric_dirs[lp], repair=True)
+      num_metrics_added += len(new_metrics)
+      evs.SetPrimaryMetrics(evs.primary_metrics | set(new_metrics))
+  if new_metric_dirs and not num_metrics_added:
+    raise ValueError('No new metrics added by --add_metrics_from_dir')
+  return evs_dict
+
+
+def PrintMatrix(new_metric_dirs):
   """Print ranks, correlations, and comparison matrix for a set of metrics."""
 
   task = tasks.Task(
@@ -288,7 +322,9 @@ def PrintMatrix():
       perm_test=FLAGS.matrix_perm_test,
       corr_fcn_args=ast.literal_eval(FLAGS.matrix_corr_args)
   )
-  task_results = task.Run(parallel_file=FLAGS.matrix_parallel)
+  evs_dict = EvsDict(new_metric_dirs)
+  task_results = task.Run(
+      parallel_file=FLAGS.matrix_parallel, eval_set_dict=evs_dict)
   fh = open(FLAGS.output, 'w') if FLAGS.output else sys.stdout
   with fh:
     fh.write(task_results.name + '\n')
@@ -412,6 +448,23 @@ def PrintComparison(res_base, res_comp, outfile):
       file=outfile)
 
 
+def GetNewMetricDirs():
+  """Parse the new_metric_dirs flag, and return map from lp->metric_dir."""
+  lps = FLAGS.language_pair.split(',')
+  new_metric_dirs = {}
+  if FLAGS.add_metrics_from_dir:
+    for lp in lps:
+      new_dir = os.path.join(FLAGS.add_metrics_from_dir, lp)
+      if gfile.IsDirectory(new_dir):
+        new_metric_dirs[lp] = new_dir
+    if len(lps) == 1 and lps[0] not in new_metric_dirs:
+      new_metric_dirs[lps[0]] = FLAGS.add_metrics_from_dir
+    if not new_metric_dirs:
+      raise ValueError(
+          'No suitable directories found for --add_metrics_from_dir flag.')
+  return new_metric_dirs
+
+
 def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
@@ -444,13 +497,23 @@ def main(argv):
   if FLAGS.language_pair is None:
     raise ValueError('No language_pair specified.')
 
+  new_metric_dirs = GetNewMetricDirs()
+
   if FLAGS.matrix:
-    PrintMatrix()
+    PrintMatrix(new_metric_dirs)
     return
 
   evs = data.EvalSet(
       FLAGS.test_set, FLAGS.language_pair,
       read_stored_metric_scores=FLAGS.scores)
+  if FLAGS.primary_metrics:
+    evs.SetPrimaryMetrics(set(FLAGS.set_primary_metrics))
+  if FLAGS.language_pair in new_metric_dirs:
+    new_metrics = evs.AddMetricsFromDir(
+        new_metric_dirs[FLAGS.language_pair], repair=True)
+    evs.SetPrimaryMetrics(evs.primary_metrics | set(new_metrics))
+    if not new_metrics:
+      raise ValueError('No new metrics added by --add_metrics_from_dir')
 
   if FLAGS.scores:
     PrintScores(evs)

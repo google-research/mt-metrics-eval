@@ -337,7 +337,11 @@ class EvalSet:
       repair: Replace missing scores with 0s, see CheckScores().
       replace: If True, overwrite scores for any existing metric with the same
         name.
+
+    Returns:
+      List of basenames for metrics read in.
     """
+    basenames = []
     for filename in glob.glob(os.path.join(dir_name, '*.score')):
       name, level = self.ParseMetricFilename(filename)
       basename, refs = self.ParseMetricName(name)
@@ -346,6 +350,8 @@ class EvalSet:
       else:
         scores = ReadScoreFile(filename)
       self.AddMetric(basename, refs, level, scores, repair, replace)
+      basenames.append(basename)
+    return basenames
 
   def AddMetric(
       self,
