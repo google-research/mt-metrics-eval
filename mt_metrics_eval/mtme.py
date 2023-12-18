@@ -206,7 +206,7 @@ flags.DEFINE_string(
     'Extra arguments to the matrix_corr function, a string that can be '
     'converted to a python dict, eg \'{"variant": "acc23", "epsilon": 10}\'.')
 flags.DEFINE_list(
-    'set_primary_metrics', None,
+    'primary_metrics', None,
     'List of basenames of metrics to consider primary, for example '
     '"BLEU,BLEURT-20,COMET". This can be used in conjunction with '
     '--matrix_primary to reduce the number of expensive metric pairwise '
@@ -286,8 +286,8 @@ def EvsDict(new_metric_dirs):
   for lp in FLAGS.language_pair.split(','):
     evs = data.EvalSet(FLAGS.test_set, lp, True)
     evs_dict[(FLAGS.test_set, lp)] = evs
-    if FLAGS.set_primary_metrics:
-      evs.SetPrimaryMetrics(set(FLAGS.set_primary_metrics))
+    if FLAGS.primary_metrics:
+      evs.SetPrimaryMetrics(set(FLAGS.primary_metrics))
     if lp in new_metric_dirs:
       new_metrics = evs.AddMetricsFromDir(new_metric_dirs[lp], repair=True)
       num_metrics_added += len(new_metrics)
@@ -507,7 +507,7 @@ def main(argv):
       FLAGS.test_set, FLAGS.language_pair,
       read_stored_metric_scores=FLAGS.scores)
   if FLAGS.primary_metrics:
-    evs.SetPrimaryMetrics(set(FLAGS.set_primary_metrics))
+    evs.SetPrimaryMetrics(set(FLAGS.primary_metrics))
   if FLAGS.language_pair in new_metric_dirs:
     new_metrics = evs.AddMetricsFromDir(
         new_metric_dirs[FLAGS.language_pair], repair=True)

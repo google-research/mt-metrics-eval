@@ -25,6 +25,7 @@ from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple, Union
 import urllib.request
 import apache_beam as beam
 from mt_metrics_eval import meta_info
+from mt_metrics_eval import ratings
 from mt_metrics_eval import stats
 import numpy as np
 
@@ -44,7 +45,8 @@ class EvalSet:
                read_stored_metric_scores: bool = False,
                info: meta_info.MetaInfo = None,
                path: str = None,
-               strict: bool = False):
+               strict: bool = False,
+               read_stored_ratings: bool = False):
     """Load data for a given test set and language pair.
 
     By default this will load meta-info and read data for one of the known
@@ -67,6 +69,9 @@ class EvalSet:
       strict: If False, score files that are missing all entries for some
         systems will be 'repaired' by silently adding 0 scores for those systems
         instead of raising an exception.
+      read_stored_ratings: Read stored ratings (character-level error spans) if
+        any exist for this dataset. This makes loading slower, and is only
+        needed for analysis that directly involves ratings.
     """
     self.name = name
     self.lp = lp
@@ -81,7 +86,8 @@ class EvalSet:
     self._std_human_scores = self.info.std_gold
     self._primary_metrics = self.info.primary_metrics.copy()
 
-    self._ReadDataset(name, lp, read_stored_metric_scores, path, strict)
+    self._ReadDataset(
+        name, lp, read_stored_metric_scores, path, strict, read_stored_ratings)
 
     # Check compatibility between info and data read in.
     # No checks for primary metrics because there are no hard requirements:
@@ -97,6 +103,14 @@ class EvalSet:
       raise ValueError(
           f'Outlier systems {self.outlier_sys_names - self.sys_names} '
           'not in known set.')
+
+  @property
+  def src_lang(self) -> str:
+    return self.lp.split('-')[0]
+
+  @property
+  def tgt_lang(self) -> str:
+    return self.lp.split('-')[1]
 
   @property
   def levels(self) -> Set[str]:
@@ -142,6 +156,11 @@ class EvalSet:
   def human_score_names(self) -> Set[str]:
     """Names of different human scores available, eg 'wmt-z', 'mqm'."""
     return self._human_score_names
+
+  @property
+  def human_rating_names(self) -> Set[str]:
+    """Names of different human ratings available, eg 'mqm.rater1'."""
+    return self._human_rating_names
 
   def StdHumanScoreName(self, level) -> str:
     """Name of standard human score for a given level in self.levels."""
@@ -240,6 +259,23 @@ class EvalSet:
     else:
       return None
 
+  def Ratings(self, rater) -> Dict[str, list[ratings.Rating | None]]:
+    """Get stored ratings assigned to segments.
+
+    Args:
+      rater: Any string in human_rating_names.
+
+    Returns:
+      Mapping from system names to lists of Ratings objects corresponding to
+      segments in order. Each Rating is the output of a single rater working on
+      the corresponding segment. (Some rater names include 'merged' to indicate
+      that different raters have worked on different segments, but these still
+      have only one rater per segment.) None entries mean the segment hasn't
+      been rated; empty 'errors' members in the Ratings objects mean it is
+      judged to be error free.
+    """
+    return self._ratings[rater] if rater in self._ratings else None
+
   def Correlation(self,
                   gold_scores: Dict[str, List[float]],
                   metric_scores: Dict[str, List[float]],
@@ -282,12 +318,13 @@ class EvalSet:
       all_metric_scores.extend(mscores)
     return stats.Correlation(len(sys_names), all_gold_scores, all_metric_scores)
 
-  def ParseHumanScoreFilename(self, filename):
-    """Parse a human-score filename into lang, name, and level components."""
+  def ParseHumanScoreFilename(self, filename, rating_file=False):
+    """Parse a human-score/rating filename into lang, name, level components."""
+    exten = 'rating' if rating_file else 'score'
     # SRC-TGT.NAME.LEVEL.score
     toks = os.path.basename(filename).split('.')
-    if len(toks) < 4 or toks[-1] != 'score':
-      raise ValueError(f'Bad format for human scores: {filename}')
+    if len(toks) < 4 or toks[-1] != exten:
+      raise ValueError(f'Bad format for human {exten}s: {filename}')
     lp = toks[0]
     name = '.'.join(toks[1:-2])
     level = toks[-2]
@@ -452,7 +489,9 @@ class EvalSet:
     domains_and_docs = zip(self.DomainsPerSeg(), self.DocsPerSeg())
     return [domain for domain, _ in _MapPositions(list(domains_and_docs))]
 
-  def _ReadDataset(self, name, lp, read_stored_metric_scores, path, strict):
+  def _ReadDataset(
+      self, name, lp, read_stored_metric_scores, path, strict,
+      read_stored_ratings):
     """Read data for given name and language pair."""
 
     if path is None:
@@ -506,6 +545,18 @@ class EvalSet:
         self._scores[level][scorer] = ReadScoreFile(filename)
       self.CheckScores(
           self._scores[level][scorer], scorer, level, True, repair=not strict)
+
+    self._human_rating_names = set()
+    self._ratings = {}
+    if read_stored_ratings:
+      for filename in glob.glob(
+          os.path.join(d, 'human-scores', f'{lp}.*.rating')):
+        _, rater, level = self.ParseHumanScoreFilename(
+            os.path.basename(filename), rating_file=True)
+        assert(level == 'seg')
+        self._human_rating_names.add(rater)
+        assert rater not in self._ratings, rater
+        self._ratings[rater] = ratings.ReadRatingFile(filename)
 
     self._metric_names = set()
     self._metric_basenames = set()

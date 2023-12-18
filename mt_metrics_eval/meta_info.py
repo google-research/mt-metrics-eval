@@ -99,6 +99,7 @@ WMT23_DA = MetaInfo(
     set(), WMT23_PRIMARIES, WMT23_BASELINES)
 
 DATA = {
+    'wmt23.sent': {'en-de': WMT23},
     'wmt23': {
         'en-de': dataclasses.replace(WMT23, outlier_systems={'synthetic_ref'}),
         'he-en': dataclasses.replace(WMT23, std_ref='refB'),

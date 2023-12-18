@@ -16,6 +16,7 @@
 
 from mt_metrics_eval import data
 from mt_metrics_eval import meta_info
+from mt_metrics_eval import ratings
 import numpy as np
 import unittest
 
@@ -276,6 +277,53 @@ class EvalSetTest(unittest.TestCase):
       sys_names = self._std_sys_names(evs).intersection(gold_scores)
       kl = evs.Correlation(gold_scores, beer_scores, sys_names).KendallLike()
       self.assertAlmostEqual(kl[0], expected[lp], places=3)
+
+  def testWMT23EnDeRatings(self):
+    evs = data.EvalSet('wmt23', 'en-de', read_stored_ratings=True)
+    self.assertEqual(evs.human_rating_names, {'mqm.merged'})
+
+    expected_error = ratings.Error(
+        start=0,
+        end=23,
+        category='style/unnatural or awkward',
+        severity='minor',
+        score=1.0,
+        is_source_error=False
+    )
+    expected = ratings.Rating([expected_error])
+    self.assertEqual(evs.Ratings('mqm.merged')['AIRC'][5], expected)
+
+  def testWMT23SentEnDeRatings(self):
+    evs = data.EvalSet('wmt23.sent', 'en-de', read_stored_ratings=True)
+    self.assertEqual(evs.human_rating_names, {'mqm.merged'})
+
+    expected_error = ratings.Error(
+        start=212,
+        end=237,
+        category='accuracy/addition',
+        severity='major',
+        score=5.0,
+        is_source_error=False
+    )
+    expected = ratings.Rating([expected_error])
+    self.assertEqual(evs.Ratings('mqm.merged')['ONLINE-Y'][2], expected)
+
+  def testWMT23ZhEnRatings(self):
+    evs = data.EvalSet('wmt23', 'zh-en', read_stored_ratings=True)
+    self.assertEqual(
+        evs.human_rating_names,
+        {f'mqm.rater{i}' for i in range(1, 9)})
+
+    expected_error = ratings.Error(
+        start=148,
+        end=149,
+        category='fluency/punctuation',
+        severity='minor',
+        score=0.1,
+        is_source_error=False
+    )
+    expected = ratings.Rating([expected_error])
+    self.assertEqual(evs.Ratings('mqm.rater1')['GPT4-5shot'][318], expected)
 
 
 class DataTest(unittest.TestCase):
