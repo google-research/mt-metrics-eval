@@ -29,7 +29,7 @@ This module provides:
 import dataclasses
 import itertools
 import math
-from typing import Callable, Optional, Tuple
+from typing import Callable
 import warnings
 from mt_metrics_eval import tau_optimization
 import numpy as np
@@ -125,7 +125,7 @@ class AverageCorrelation:
   # pylint: disable=g-bare-generic
   def __init__(
       self,
-      corr_fcn: Callable[..., Tuple],
+      corr_fcn: Callable[..., tuple],
       num_sys: int = 0,
       average_by: str = 'none',
       filter_nones: bool = True,
@@ -207,7 +207,7 @@ def KendallLike(
     gold_scores: ArrayLike,
     metric_scores: ArrayLike,
     thresh: float = 25.0,
-) -> Tuple[float, float, int, int, int]:
+) -> tuple[float, float, int, int, int]:
   """WMT20 'Kendall-like' correlation between two vectors."""
   concordant, discordant = 0, 0
   for (a, b) in itertools.combinations(zip(gold_scores, metric_scores), 2):
@@ -291,11 +291,11 @@ def _MatrixSufficientStatistics(
     x: ArrayLike,
     y: ArrayLike,
     epsilon: float,
-    preproc: Optional[KendallPreproc],
-    preproc_x: Optional[KendallPreproc],
-    ) -> Tuple[int, int, int, int, int]:
+    preproc: KendallPreproc | None,
+    preproc_x: KendallPreproc | None,
+    ) -> tuple[int, int, int, int, int]:
   """Calculates tau sufficient statistics using matrices in NumPy.
-  
+
   An absolute difference less than `epsilon` in x pairs is considered to be
   a tie.
 
@@ -346,10 +346,10 @@ def _MatrixSufficientStatistics(
 def _FenwickTreeSufficientStatistics(
     x: ArrayLike,
     y: ArrayLike,
-    preproc: Optional[KendallPreproc],
-) -> Tuple[int, int, int, int, int, int]:
+    preproc: KendallPreproc | None,
+) -> tuple[int, int, int, int, int, int]:
   """Calculates tau sufficient statistics using the Fenwick Tree method.
-  
+
   This is based on the scipy.stats implementation of Kendall's tau
   https://github.com/scipy/scipy/blob/745bf604640969a25c18f6d6ace166701fac0429/scipy/stats/_stats_py.py#L5474
   with the following changes:
@@ -426,10 +426,10 @@ def KendallVariants(
     gold_scores: ArrayLike,
     metric_scores: ArrayLike,
     variant: str = 'b',
-    preproc: Optional[KendallPreproc] = None,
+    preproc: KendallPreproc | None = None,
     epsilon: float = 0.0,
-    metric_preproc: Optional[PairwiseDiffs] = None,
-) -> Tuple[float, float]:
+    metric_preproc: PairwiseDiffs | None = None,
+) -> tuple[float, float]:
   """Lightweight, optionally factored versions of variants on Kendall's Tau.
 
   This function calculates the sufficient statistics for tau in two different
@@ -526,7 +526,7 @@ def KendallWithTiesOpt(
     num_sys: int = 1,
     average_by: str = 'none',
     sample_rate: float = 0.1,
-    ) -> Tuple[float, float, tau_optimization.TauOptimizationResult]:
+    ) -> tuple[float, float, tau_optimization.TauOptimizationResult]:
   """Compute optimized Kendall's variants that take ties into account.
 
   Uses tau_optimization to optimize a tie threshold on the current input, and
@@ -638,7 +638,7 @@ class PermutationSigDiffParams:
 def PermutationSigDiff(
     corr1: Correlation,
     corr2: Correlation,
-    corr_fcn: Callable[..., Tuple],
+    corr_fcn: Callable[..., tuple],
     average_by: str = 'none',
     k: int = 1000,
     params: PermutationSigDiffParams = PermutationSigDiffParams(),
@@ -735,8 +735,8 @@ def PairwisePermutationSigDiff(
     average_by: str = 'none',
     k: int = 1000,
     params: PermutationSigDiffParams = PermutationSigDiffParams(),
-    epsilon1: Optional[float] = None,
-    epsilon2: Optional[float] = None,
+    epsilon1: float | None = None,
+    epsilon2: float | None = None,
     sample_rate: float = 1.0,
     replace_nans_with_zeros: bool = False,
     ) -> tuple[float, float, int]:

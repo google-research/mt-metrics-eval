@@ -15,22 +15,21 @@
 """Meta-information for standard datasets."""
 
 import dataclasses
-from typing import Dict, Optional, Set
 
 
 @dataclasses.dataclass
 class MetaInfo:
   """Meta information for test-sets and language pairs."""
   std_ref: str
-  std_gold: Dict[str, str]  # Map level to name of human gold scores.
-  outlier_systems: Set[str]
+  std_gold: dict[str, str]  # Map level to name of human gold scores.
+  outlier_systems: set[str]
   # Base names (not including -reference extensions) of metrics considered to be
   # primary submissions, or baselines like BLEU. When primary submissions can
   # include both reference-based and reference-free versions, these must have
   # distinct basenames, eg MyMetric and MyMetric-QE.
-  primary_metrics: Set[str]
+  primary_metrics: set[str]
   # For backward compability, baselines should be a subset of primary metrics.
-  baseline_metrics: Optional[Set[str]] = None
+  baseline_metrics: set[str] | None = None
 
 WMT19 = MetaInfo('ref', {'sys': 'wmt-z', 'seg': 'wmt-raw'}, set(), set())
 WMT20 = MetaInfo('ref', {'sys': 'wmt-z', 'doc': 'wmt-raw', 'seg': 'wmt-raw'},

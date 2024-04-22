@@ -21,7 +21,7 @@ import itertools
 import os
 import sys
 import tarfile
-from typing import Callable, Dict, Iterable, List, Sequence, Set, Tuple, Union
+from typing import Callable, Iterable, Sequence
 import urllib.request
 import apache_beam as beam
 from mt_metrics_eval import meta_info
@@ -35,6 +35,11 @@ import glob
 
 
 TGZ = 'https://storage.googleapis.com/mt-metrics-eval/mt-metrics-eval-v2.tgz'
+
+# This string is used to represent a missing or null translation in a text file.
+# This is for standarization purposes only. If this string is on a line in a
+# text file, it will be interpreted as `None` instead of the string itself.
+NO_TRANSLATION = '[No translation supplied]'
 
 
 class EvalSet:
@@ -113,7 +118,7 @@ class EvalSet:
     return self.lp.split('-')[1]
 
   @property
-  def levels(self) -> Set[str]:
+  def levels(self) -> set[str]:
     """Levels for which scores exist, subset of {sys, domain, doc, seg}."""
     return set(self._scores.keys())
 
@@ -128,7 +133,7 @@ class EvalSet:
     return self._docs.keys()
 
   @property
-  def ref_names(self) -> Set[str]:
+  def ref_names(self) -> set[str]:
     """Names of available references."""
     return set(self._all_refs.keys())
 
@@ -138,27 +143,31 @@ class EvalSet:
     return self.info.std_ref
 
   @property
-  def sys_names(self) -> Set[str]:
+  def sys_names(self) -> set[str]:
     """Names of all 'systems' for which output is available."""
     return set(self._sys_outputs.keys())
 
   @property
-  def human_sys_names(self) -> Set[str]:
+  def human_sys_names(self) -> set[str]:
     """Names of systems in sys_names that are human output."""
     return self._human_sys_names
 
   @property
-  def outlier_sys_names(self) -> Set[str]:
+  def outlier_sys_names(self) -> set[str]:
     """Names of systems in sys_names considered to be outliers."""
     return self.info.outlier_systems
 
+  def SetOutlierSysNames(self, outliers: set[str]) -> None:
+    """Overwrites the list of outlier systems."""
+    self.info.outlier_systems = outliers
+
   @property
-  def human_score_names(self) -> Set[str]:
+  def human_score_names(self) -> set[str]:
     """Names of different human scores available, eg 'wmt-z', 'mqm'."""
     return self._human_score_names
 
   @property
-  def human_rating_names(self) -> Set[str]:
+  def human_rating_names(self) -> set[str]:
     """Names of different human ratings available, eg 'mqm.rater1'."""
     return self._human_rating_names
 
@@ -170,17 +179,17 @@ class EvalSet:
       return None
 
   @property
-  def metric_names(self) -> Set[str]:
+  def metric_names(self) -> set[str]:
     """Full names of available metrics, eg BLEU-refA, COMET-refB."""
     return self._metric_names
 
   @property
-  def metric_basenames(self) -> Set[str]:
+  def metric_basenames(self) -> set[str]:
     """Basenames of available metrics, eg BLEU, COMET."""
     return self._metric_basenames
 
   @property
-  def primary_metrics(self) -> Set[str]:
+  def primary_metrics(self) -> set[str]:
     """Base names of primary metrics, empty set if none."""
     return self._primary_metrics
 
@@ -209,36 +218,36 @@ class EvalSet:
       raise ValueError(f'Unkown format: {fmt}')
     return name
 
-  def ReferencesUsed(self, metric_name: str) -> Set[str]:
+  def ReferencesUsed(self, metric_name: str) -> set[str]:
     """Reference(s) used by a metric."""
     return self.ParseMetricName(metric_name)[1]
 
   @property
-  def domains(self) -> Dict[str, List[List[int]]]:
+  def domains(self) -> dict[str, list[list[int]]]:
     """Map from domain name to [[beg, end+1], ...] segment position lists."""
     return self._domains
 
   @property
-  def docs(self) -> Dict[str, List[int]]:
+  def docs(self) -> dict[str, list[int]]:
     """Map from doc name to [beg, end+1] segment positions."""
     return self._docs
 
   @property
-  def src(self) -> List[str]:
+  def src(self) -> list[str]:
     """Segments in the source text, in order."""
     return self._src
 
   @property
-  def all_refs(self) -> Dict[str, List[str]]:
+  def all_refs(self) -> dict[str, list[str]]:
     """Map from reference name to text for that reference."""
     return self._all_refs
 
   @property
-  def sys_outputs(self) -> Dict[str, List[str]]:
+  def sys_outputs(self) -> dict[str, list[str]]:
     """Map from system name to output text from that system."""
     return self._sys_outputs
 
-  def Scores(self, level: str, scorer: str) -> Dict[str, List[float]]:
+  def Scores(self, level: str, scorer: str) -> dict[str, list[float]]:
     """Get stored scores assigned to text units at a given level.
 
     Args:
@@ -259,11 +268,16 @@ class EvalSet:
     else:
       return None
 
-  def Ratings(self, rater) -> Dict[str, list[ratings.Rating | None]]:
+  @property
+  def rating_names(self) -> set[str]:
+    """The names of all available sets of ratings."""
+    return set(self._ratings.keys())
+
+  def Ratings(self, rating_name) -> dict[str, list[ratings.Rating | None]]:
     """Get stored ratings assigned to segments.
 
     Args:
-      rater: Any string in human_rating_names.
+      rating_name: Any string in human_rating_names.
 
     Returns:
       Mapping from system names to lists of Ratings objects corresponding to
@@ -274,11 +288,15 @@ class EvalSet:
       been rated; empty 'errors' members in the Ratings objects mean it is
       judged to be error free.
     """
-    return self._ratings[rater] if rater in self._ratings else None
+    return self._ratings[rating_name] if rating_name in self._ratings else None
+
+  def RaterIdsPerSeg(self, rating_name: str) -> dict[str, list[str | None]]:
+    """Returns a dict of system to rater IDs for each segment."""
+    return self._rater_ids[rating_name]
 
   def Correlation(self,
-                  gold_scores: Dict[str, List[float]],
-                  metric_scores: Dict[str, List[float]],
+                  gold_scores: dict[str, list[float]],
+                  metric_scores: dict[str, list[float]],
                   sys_names: Iterable[str] = None,
                   indexes: Sequence[int] = None):
     """Get correlation statistics for given metric scores.
@@ -548,15 +566,20 @@ class EvalSet:
 
     self._human_rating_names = set()
     self._ratings = {}
+    self._rater_ids = {}
     if read_stored_ratings:
       for filename in glob.glob(
-          os.path.join(d, 'human-scores', f'{lp}.*.rating')):
-        _, rater, level = self.ParseHumanScoreFilename(
-            os.path.basename(filename), rating_file=True)
-        assert(level == 'seg')
-        self._human_rating_names.add(rater)
-        assert rater not in self._ratings, rater
-        self._ratings[rater] = ratings.ReadRatingFile(filename)
+          os.path.join(d, 'human-scores', f'{lp}.*.rating')
+      ):
+        _, rating_name, level = self.ParseHumanScoreFilename(
+            os.path.basename(filename), rating_file=True
+        )
+        assert level == 'seg'
+        self._human_rating_names.add(rating_name)
+        assert rating_name not in self._ratings, rating_name
+        self._ratings[rating_name], self._rater_ids[rating_name] = (
+            ratings.ReadRatingFile(filename, rating_name)
+        )
 
     self._metric_names = set()
     self._metric_basenames = set()
@@ -619,7 +642,13 @@ def _CopyTgz(dest):
 
 def _ReadTextFile(filename):
   with open(filename) as f:
-    lines = [line.rstrip() for line in f]
+    lines = []
+    for line in f:
+      line = line.rstrip()
+      if line == NO_TRANSLATION:
+        lines.append(None)
+      else:
+        lines.append(line)
   return lines
 
 
@@ -664,15 +693,15 @@ def Download():
     tar.extractall(path)
 
 
-def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
-                    close_refs: Set[str], include_human: bool,
+def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
+                    close_refs: set[str], include_human: bool,
                     include_outliers: bool, gold_name: str,
                     primary_metrics: bool, domain: str = None,
-                    extern_metrics: Dict[str, Dict[str, List[float]]] = None,
+                    extern_metrics: dict[str, dict[str, list[float]]] = None,
                     sample_size: int = None, sample_method: str = None,
                     sample_seed: int = None,
                     metric_format: str = 'full',
-                    ) -> Dict[str, stats.Correlation]:
+                    ) -> dict[str, stats.Correlation]:
   """Convenience function to generate sufficient stats for given parameters.
 
   Note that this doesn't actually compute correlations, it only extracts the
@@ -786,8 +815,8 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: Set[str],
 
 
 def CompareMetrics(
-    metric_corrs: Dict[str, stats.Correlation],
-    corr_fcn: Callable[[List[float], List[float], ...], Tuple[float, float]],
+    metric_corrs: dict[str, stats.Correlation],
+    corr_fcn: Callable[[list[float], list[float], ...], tuple[float, float]],
     average_by: str = 'none',
     k: int = 1000,
     psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
@@ -796,8 +825,8 @@ def CompareMetrics(
     perm_test: str = 'scores',
     parallel_file: str = None,
     **corr_fcn_args,
-    ) -> Tuple[
-        Dict[str, Tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[
+        dict[str, tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
   """Compare a set of metrics using a given correlation function.
 
   This function uses a permutation test to compute significant differences
@@ -890,21 +919,21 @@ def CompareMetrics(
 
 
 def CompareMetricsWithGlobalAccuracy(
-    evs_list: List[EvalSet],
-    main_refs_list: List[Set[str]],
-    close_refs_list: List[Set[str]],
+    evs_list: list[EvalSet],
+    main_refs_list: list[set[str]],
+    close_refs_list: list[set[str]],
     include_human: bool,
     include_outliers: bool,
-    gold_name: Union[str, list[str]],
+    gold_name: str | list[str],
     primary_metrics: bool,
     domain: str = None,
     k: int = 1000,
     psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
     pval: float = 0.05,
-    extern_metrics_list: List[Dict[str, Dict[str, List[float]]]] = None,
+    extern_metrics_list: list[dict[str, dict[str, list[float]]]] = None,
     parallel_file: str = None,
-    )-> Tuple[
-        Dict[str, Tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
+    )-> tuple[
+        dict[str, tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
   """Compare a set of metrics using accuracy.
 
   This is a special case of CompareMetrics that uses pairwise accuracy
@@ -1002,9 +1031,9 @@ def CompareMetricsWithGlobalAccuracy(
 
 
 def ComputeSigMatrix(
-    metric_corrs: Dict[str, stats.Correlation],
-    corrs_and_ranks: Dict[str, Tuple[float, int]],
-    corr_fcn: Callable[[List[float], List[float], ...], Tuple[float, float]],
+    metric_corrs: dict[str, stats.Correlation],
+    corrs_and_ranks: dict[str, tuple[float, int]],
+    corr_fcn: Callable[[list[float], list[float], ...], tuple[float, float]],
     average_by: str,
     k: int,
     psd: stats.PermutationSigDiffParams,
@@ -1012,7 +1041,7 @@ def ComputeSigMatrix(
     perm_test: str,
     parallel_file: str = None,
     **corr_fcn_args,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
   """Populate significance matrix using PermutationSigDiff with given args."""
 
   variant, sample_rate = 'acc23', 1.0
@@ -1032,7 +1061,7 @@ def ComputeSigMatrix(
 
   def ComputePval(
       metric1, metric2
-  ) -> Tuple[str, str, float, list[Tuple[float, float]]]:
+  ) -> tuple[str, str, float, list[tuple[float, float]]]:
     if perm_test == 'scores':
       pval, _, _, draws = stats.PermutationSigDiff(
           metric_corrs[metric2], metric_corrs[metric1], corr_fcn, average_by, k,

@@ -22,7 +22,7 @@ from mt_metrics_eval import ratings
 from mt_metrics_eval import standalone_ratings
 import glob
 
-flags.DEFINE_string(
+flags.DEFINE_multi_string(
     'ratings_file', None,
     'Ratings jsonl file to be converted.', required=True)
 flags.DEFINE_string(
@@ -65,23 +65,31 @@ def main(argv):
   if len(argv) > 1:
     raise app.UsageError('Too many command-line arguments.')
 
-  ratings_list = standalone_ratings.ReadRatingFile(FLAGS.ratings_file)
+  ratings_list = []
+  for ratings_file in FLAGS.ratings_file:
+    ratings_list.extend(standalone_ratings.ReadRatingFile(ratings_file))
   evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair)
-  ratings_dict, raters_key = standalone_ratings.RatingsListToEvalSetRatings(
-      ratings_list, evs, FLAGS.anonymize_raters, FLAGS.strict)
+  ratings_dict, raters_key, rater_ids_dict = (
+      standalone_ratings.RatingsListToEvalSetRatings(
+          ratings_list, evs, FLAGS.anonymize_raters, FLAGS.strict
+      )
+  )
 
   if FLAGS.echo_ratings_file:
     standalone_ratings.WriteRatingFile(ratings_list, FLAGS.echo_ratings_file)
 
   if FLAGS.merge_raters:
-    new_ratings = standalone_ratings.MergeEvalSetRaters(ratings_dict, evs)
+    new_ratings, new_rater_ids = standalone_ratings.MergeEvalSetRaters(
+        ratings_dict, evs, rater_ids_dict
+    )
     if new_ratings:
       ratings_dict = {'merged': new_ratings}
+      rater_ids_dict = {'merged': new_rater_ids}
 
   for rater, evs_ratings in ratings_dict.items():
     filename = os.path.join(
         FLAGS.output_dir, f'{FLAGS.prefix}{rater}.seg.rating')
-    ratings.WriteRatingFile(evs_ratings, filename)
+    ratings.WriteRatingFile(evs_ratings, filename, rater_ids_dict[rater])
 
   if FLAGS.rater_key_file:
     with open(FLAGS.rater_key_file, 'w') as f:

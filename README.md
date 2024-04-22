@@ -1,18 +1,19 @@
 # MT Metrics Eval V2
 
 MTME is a simple toolkit to evaluate the performance of Machine Translation
-metrics on standard test sets from the
-[WMT Metrics Shared Tasks](https://statmt.org/wmt22/metrics/index.html).
+metrics on standard test sets such as those from the
+[WMT Metrics Shared Tasks](https://wmt-metrics-task.github.io).
 It bundles data relevant to metric development and evaluation for a
 given test set and language pair, and lets you do the following:
 
 - Access source, reference, and MT output text, along with associated
-meta-info, for the WMT metrics tasks from 2019-2023. This can be done via
+meta-info, for the WMT metrics tasks from 2019 on. This can be done via
 software, or by directly accessing the files in a linux directory
 structure, in a straightforward format.
-- Access human and automatic metric scores for the above data.
+- Access human and automatic metric scores for the above data, and MQM ratings
+for some language pairs.
 - Reproduce the official results from the WMT metrics tasks. For
-WMT22, there is a colab to do this; other years require a bit more work.
+WMT22 on, there are colabs to do this; other years require more work.
 - Compute various correlations and perform significance tests on correlation
 differences between two metrics.
 
@@ -21,7 +22,7 @@ API.
 
 ## Installation
 
-You need python 3.9 or later. To install:
+You need python 3.10 or later. To install:
 
 ```bash
 git clone https://github.com/google-research/mt-metrics-eval.git
@@ -50,11 +51,8 @@ tar xfz mt-metrics-eval-v2.tgz
 Once data is downloaded, you can optionally test the install:
 
 ```bash
-python3 -m unittest mt_metrics_eval.stats_test
-python3 -m unittest mt_metrics_eval.data_test  # Takes about 30 seconds.
-python3 -m unittest mt_metrics_eval.tasks_test  # Takes about 30 seconds.
+python3 -m unittest discover mt_metrics_eval "*_test.py"  # Takes ~70 seconds.
 ```
-
 
 ## Running from the command line
 
@@ -158,26 +156,87 @@ from [Ties Matter: Meta-Evaluating Modern Metrics with Pairwise Accuracy and Tie
 It also contains examples for how to calculate the proposed pairwise accuracy
 with tie calibration.
 
-## Scoring scripts
+## MQM Ratings
 
-The scripts `score_mqm` and `score_sqm` can be used to convert MQM and SQM
-annotations from [Google's MQM annotation data](
-https://github.com/google/wmt-mqm-human-evaluation) into score files in
-mt-metrics-eval format. For example:
+MTME also supports representing MQM ratings.
+The ratings are stored as `rating.Rating` objects in the `EvalSet`.
+They can be accessed via the `EvalSet.Ratings()` function.
+`Ratings()` returns a dictionary that maps between the name of a set of
+ratings and the ratings themselves, one per segment.
+Each entry can either represent:
+
+- An individual rater's ratings, in which the key is the ID of the rater
+- A metric's ratings, in which the key is the ID of the system that predicted the rating
+- A combined set of ratings that come from different raters, in which the key
+is the name for this group of ratings. This could be used if there was a logical
+"round" of ratings from different raters, like a full round of ratings collected
+as part of a WMT evaluation.
+
+The IDs of the raters who rated the segments can be accessed via
+`EvalSet.RaterIdsPerSeg()`. It returns a dict that is parallel to an entry
+in `EvalSet.Ratings()` that lists the individual rater IDs for each rating or
+`None` if there was no rating.
+For an individual rater's ratings or a metric's ratings, these are typically
+that rater's ID or the name of the metric. For a combined set of ratings, this
+will contain the per-segment rater IDs.
+
+For each year of WMT for which ratings are included in MTME, there is a rating
+entry for each individual rater. If there was a logical grouping of ratings,
+like a round of ratings that were collected at the same time, those are also
+included.
+Here are the ratings that are currently available:
+
+| Dataset | Language Pair | Ratings |
+| ------- | ------------- | ------- |
+| wmt20   | en-de         | <ul><li>"mqm.rater1"-"mqm.rater6": The individual rater's ratings. Each segment was rated up to 3 times, and there is no clear definition of a round of ratings, so no combined set of ratings is included.</li></ul> |
+| wmt20   | zh-en         | <ul><li>"mqm.rater1"-"mqm.rater6": The individual rater's ratings. Each segment was rated up to 3 times, and there is no clear definition of a round of ratings, so no combined set of ratings is included.</li></ul> |
+| wmt21.news | en-de | <ul><li>"mqm.rater1"-"mqm.rater14": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-14 that were used in the WMT evaluation</li></ul> |
+| wmt21.news | zh-en | <ul><li>"mqm.rater1"-"mqm.rater9": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-9 that were used in the WMT evaluation</li></ul> |
+| wmt21.tedtalks | en-de | <ul><li>"mqm.rater1"-"mqm.rater4": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-4 that were used in the WMT evaluation</li></ul> |
+| wmt21.tedtalks | zh-en | <ul><li>mqm.rater1-mqm.rater9: The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-9 that were used in the WMT evaluation</li></ul> |
+| wmt22 | en-de | <ul><li>"mqm.rater1"-"mqm.rater7": The individual rater's ratings (from all rounds; see below)</li><li>"mqm.merged": The combined ratings of rater1-7 that were used in the WMT evaluation</li><li>"round2.mqm.merged": A second round of ratings collected from rater1-7 (these were not part of the WMT evaluation)</li><li>"round3.mqm.merged": A third round of ratings collected from rater1-7 (these were not part of the WMT evaluation)</li></ul> |
+| wmt22 | en-ru | <ul><li>"mqm.rater1"-"mqm.rater4": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-4 that were used in the WMT evaluation</li> |
+| wmt22 | zh-en | <ul><li>"mqm.rater1"-"mqm.rater12": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-12 that were used in the WMT evaluation</li> |
+| wmt23 | en-de | <ul><li>"mqm.rater1"-"mqm.rater10": The individual rater's ratings</li><li>"mqm.merged": The combined ratings of rater1-10 that were used in the WMT evaluation</li> |
+| wmt23 | zh-en | <ul><li>"mqm.rater1"-"mqm.rater8": The individual rater's ratings. A small subset of segments were rated by all of the raters, so there is no clear definition of a round of ratings, so no merged set of ratings is included.</li> |
+
+Note that the ratings might differ slightly from the ratings that were released
+as part of the original WMT evaluations. The released data and the translations
+in MTME were sometimes different (e.g., punctuation was introduced or removed,
+whitespace inserted, etc.), which made it difficult to map the MQM ratings to
+character offsets in the MTME translations.
+We wrote scripts to fix the ratings so they would match the MTME versions, but
+this was sometimes lossy and not always possible, so some ratings might be
+different or even missing.
+This is less of a problem with more recent WMT years.
+
+
+## Conversion scripts
+
+The `converters` module contains scripts to convert between different formats
+for ratings and scores.
+
+For example, to convert MQM annotations from [Google's tsv annotation format](
+https://github.com/google/wmt-mqm-human-evaluation) into scores:
 
 ```bash
 git clone https://github.com/google/wmt-mqm-human-evaluation
-python3 -m mt_metrics_eval.score_mqm \
+python3 -m mt_metrics_eval.converters.score_mqm \
   --weights "major:5 minor:1 No-error:0 minor/Fluency/Punctuation:0.1" \
   < wmt-mqm-human-evaluation/generalMT2022/ende/mqm_generalMT2022_ende.tsv \
   > mqm.ende.seg.score
 ```
-This produces an intermediate form with single scores per segment that match
-the scores in MTME; the file contains extra columns with rater id and
-other info.
 
-Other options let you explore different error weightings or extract scores from
-individual annotators.
+To convert MTME-format MQM annotations into standalone json files that bundle
+all relevant information:
+
+```bash
+python3 -m mt_metrics_eval.converters.evalset_ratings_to_standalone \
+  --evalset_ratings_files  $HOME/.mt-metrics-eval/mt-metrics-eval-v2/wmt23/human-scores/en-de.mqm.merged.seg.rating \
+  --language_pair en-de \
+  --test_set wmt23 \
+  --ratings_file en-de.mqm.standalone.jsonl
+```
 
 ## File organization and naming convention
 
@@ -260,6 +319,13 @@ whitespace.
       - Segment-level (`seg`) files contain a block of scores for each system.
       Each block contains the scores for all segments in the system output file,
       in order.
+- human MQM ratings:
+  - filename: `human-scores/SRC-TGT.RATING_NAME.seg.rating`
+      - RATING_NAME describes the name for the collection of ratings. This can be the name of an individual rater or a name like "mqm.merged", which means multiple rater's ratings have been merged into a single collection of ratings.
+  - per-line contents: SYSNAME RATING [RATER_ID]
+      - SYSNAME must match a NAME in system outputs
+      - A JSON-serialized `ratings.Rating` object or "None" if there is no rating for the given segment.
+      - RATER_ID (optional) marks which rater did the rating. If not provided, RATING_NAME is used.
 - metric scores:
   - filename `metric-scores/SRC-TGT/NAME-REF.LEVEL.score`
       - NAME is the metric’s base name.

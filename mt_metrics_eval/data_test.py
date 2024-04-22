@@ -292,6 +292,7 @@ class EvalSetTest(unittest.TestCase):
     )
     expected = ratings.Rating([expected_error])
     self.assertEqual(evs.Ratings('mqm.merged')['AIRC'][5], expected)
+    self.assertEqual(evs.RaterIdsPerSeg('mqm.merged')['AIRC'][5], 'rater3')
 
   def testWMT23SentEnDeRatings(self):
     evs = data.EvalSet('wmt23.sent', 'en-de', read_stored_ratings=True)
@@ -307,6 +308,11 @@ class EvalSetTest(unittest.TestCase):
     )
     expected = ratings.Rating([expected_error])
     self.assertEqual(evs.Ratings('mqm.merged')['ONLINE-Y'][2], expected)
+    # TODO(dandeutsch): Update this test to check for the actual rater ID
+    # once it has been propagated to the sentence-level file.
+    self.assertEqual(
+        evs.RaterIdsPerSeg('mqm.merged')['ONLINE-Y'][2], 'mqm.merged'
+    )
 
   def testWMT23ZhEnRatings(self):
     evs = data.EvalSet('wmt23', 'zh-en', read_stored_ratings=True)

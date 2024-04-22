@@ -137,15 +137,21 @@ def RatingsListToEvalSetRatings(
     evs: data.EvalSet,
     anonymize_raters: bool = False,
     strict: bool = True,
-) -> tuple[dict[str, dict[str, list[ratings.Rating | None]]], dict[str, str]]:
+) -> tuple[
+    dict[str, dict[str, list[ratings.Rating | None]]],
+    dict[str, str],
+    dict[str, dict[str, list[str | None]]],
+]:
   """Convert Ratings list to EvalSet-style ratings dict and rater rename map."""
   new_rater_names = _RenameRaters(ratings_list, anonymize_raters)
-  ratings_dict = {}  # rater -> {sys: [rating]}
+  ratings_dict = {}  # rating_name -> {sys: [rating]}
+  rater_ids_dict = {}  # rating_name -> {sys: [rater_id]}
   for rating_id, rating in enumerate(ratings_list):
     _CheckRating(rating, evs, rating_id, strict)
     rater = new_rater_names[rating.rater_id]
     if rater not in ratings_dict:
       ratings_dict[rater] = {s: [None] * len(evs.src) for s in evs.sys_names}
+      rater_ids_dict[rater] = {s: [None] * len(evs.src) for s in evs.sys_names}
     if ratings_dict[rater][rating.system_id][rating.segment_id] is not None:
       # Nothing in the Rating spec precludes this, but it's probably something
       # we want to enforce.
@@ -154,38 +160,48 @@ def RatingsListToEvalSetRatings(
       )
     evs_rating = ratings.Rating(rating.errors)
     ratings_dict[rater][rating.system_id][rating.segment_id] = evs_rating
-  return ratings_dict, new_rater_names
+    rater_ids_dict[rater][rating.system_id][rating.segment_id] = rater
+  return ratings_dict, new_rater_names, rater_ids_dict
 
 
 def MergeEvalSetRaters(
     evs_ratings: dict[str, dict[str, list[ratings.Rating | None]]],
     evs: data.EvalSet,
-) -> dict[str, list[ratings.Rating | None]]:
+    evs_rater_ids: dict[str, dict[str, list[str | None]]],
+) -> tuple[dict[str, list[ratings.Rating | None]], dict[str, list[str | None]]]:
   """Merge disjoint ratings from multiple raters into single-rater dict."""
   new_ratings = {s: [None] * len(evs.src) for s in evs.sys_names}
-  for rater in evs_ratings:
-    for system_id in evs_ratings[rater]:
-      for seg, evs_rating in enumerate(evs_ratings[rater][system_id]):
+  new_rater_ids = {s: [None] * len(evs.src) for s in evs.sys_names}
+  for rating_name in evs_ratings:
+    for system_id in evs_ratings[rating_name]:
+      rater_ids = evs_rater_ids[rating_name][system_id]
+      for seg, evs_rating in enumerate(evs_ratings[rating_name][system_id]):
         if evs_rating is not None:
           if new_ratings[system_id][seg] is not None:
-            return {}  # duplicate
+            raise ValueError(
+                f'Found duplicate rating for system/segment: {system_id}/{seg}'
+            )
           new_ratings[system_id][seg] = evs_rating
-  return new_ratings
+          new_rater_ids[system_id][seg] = rater_ids[seg]
+  return new_ratings, new_rater_ids
 
 
 def EvalSetRatingsToRatingsList(
     evs_ratings: dict[str, dict[str, list[ratings.Rating | None]]],
     evs: data.EvalSet,
+    evs_rater_ids: dict[str, dict[str, list[str | None]]],
     rename_raters: dict[str, str] | None = None,
 ) -> list[Rating]:
   """Convert an EvalSet-style ratings dict to a list of Ratings."""
   docs_per_seg = evs.DocsPerSeg()
   ratings_list = []
-  for rater in evs_ratings:
-    for system_id in evs_ratings[rater]:
-      for seg, evs_rating in enumerate(evs_ratings[rater][system_id]):
+  for rating_name in evs_ratings:
+    for system_id in evs_ratings[rating_name]:
+      rater_ids = evs_rater_ids[rating_name][system_id]
+      for seg, evs_rating in enumerate(evs_ratings[rating_name][system_id]):
         if evs_rating is None:
           continue
+        rater = rater_ids[seg]
         rating = Rating(
             source=evs.src[seg],
             hypothesis=evs.sys_outputs[system_id][seg],

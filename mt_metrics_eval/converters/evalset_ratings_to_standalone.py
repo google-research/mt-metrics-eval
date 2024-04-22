@@ -59,15 +59,18 @@ def main(argv):
   evs = data.EvalSet(FLAGS.test_set, FLAGS.language_pair)
 
   evalset_ratings: dict[str, dict[str, list[ratings.Rating | None]]] = {}
+  evalset_rater_ids: dict[str, dict[str, list[str | None]]] = {}
   for filename in FLAGS.evalset_ratings_files:
     if not filename: continue
     _, name, _ = evs.ParseHumanScoreFilename(
         os.path.basename(filename), rating_file=True)
-    rater = name.rsplit('.', maxsplit=1)[-1]
-    evalset_ratings[rater] = ratings.ReadRatingFile(filename)
+    rating_name = name.rsplit('.', maxsplit=1)[-1]
+    evalset_ratings[rating_name], evalset_rater_ids[rating_name] = (
+        ratings.ReadRatingFile(filename, rating_name)
+    )
 
   ratings_list = standalone_ratings.EvalSetRatingsToRatingsList(
-      evalset_ratings, evs, raters_key)
+      evalset_ratings, evs, evalset_rater_ids, raters_key)
 
   standalone_ratings.WriteRatingFile(ratings_list, FLAGS.ratings_file)
 

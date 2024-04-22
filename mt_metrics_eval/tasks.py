@@ -34,7 +34,7 @@ import dataclasses
 import io
 import itertools
 import json
-from typing import Any, Optional, Union
+from typing import Any
 from mt_metrics_eval import data
 from mt_metrics_eval import meta_info
 from mt_metrics_eval import stats
@@ -265,16 +265,16 @@ class Task:
   """Parameters for data.GetCorrelations and data.CompareMetrics*."""
   test_set: str = 'wmt22'
   lang: str = 'en-de'
-  domain: Optional[str] = None
+  domain: str | None = None
   level: str = 'sys'
   human: bool = True
   avg_by: str = 'none'
   corr_fcn: str = 'pearson'
   k: int = 1000
   # None selects standard values for the following three parameters.
-  gold: Optional[Union[list[str], str]] = None
-  refs: Optional[Union[list[set[str]], set[str]]] = None
-  close_refs: Optional[Union[list[set[str]], set[str]]] = None
+  gold: list[str] | str | None = None
+  refs: list[set[str]] | set[str] | None = None
+  close_refs: list[set[str]] | set[str] | None = None
   use_outliers: bool = False
   primary: bool = True
   pval: float = 0.05
@@ -283,7 +283,7 @@ class Task:
   early_max: float = 0.50
   replace_nans_with_zeros: bool = False
   perm_test: str = 'scores'
-  corr_fcn_args: Optional[dict[str, Any]] = None
+  corr_fcn_args: dict[str, Any] | None = None
 
   def _StdGold(self, lang, level):
     return meta_info.DATA[self.test_set][lang].std_gold[level]
@@ -489,7 +489,7 @@ class TaskSet:
   """Convenience class to create and operate on sets of tasks."""
 
   def __init__(
-      self, attr_combs: Optional[dict[str, list[Any]]] = None, **attrs):
+      self, attr_combs: dict[str, list[Any]] | None = None, **attrs):
     """Construct with given attribute/value combinations.
 
     Args:

@@ -64,25 +64,45 @@ class Rating:
     return dacite.from_dict(data_class=Rating, data=d)
 
 
-def ReadRatingFile(filename) -> dict[str, list[Rating | None]]:
+def ReadRatingFile(
+    filename: str, default_rater: str
+) -> tuple[dict[str, list[Rating | None]], dict[str, list[str]]]:
   """Read a file containing sysname/rating entries."""
   ratings = collections.defaultdict(list)  # sys -> [ratings]
+  rater_ids = collections.defaultdict(list)  # sys -> [rater_id]
   with open(filename) as f:
     for line in f:
-      sysname, rating = line.strip().split(maxsplit=1)
+      cols = line.strip().split('\t')
+      if len(cols) == 2:
+        sysname, rating = cols
+        rater = default_rater
+      elif len(cols) == 3:
+        sysname, rating, rater = cols
+      else:
+        raise ValueError(
+            f'Expected 2 or 3 columns in rating file. Found {len(cols)}. Line:'
+            f' {line}'
+        )
       if rating == 'None':
         ratings[sysname].append(None)
+        rater_ids[sysname].append(None)
       else:
         ratings[sysname].append(Rating.FromDict(json.loads(rating)))
-  return ratings
+        rater_ids[sysname].append(rater)
+  return ratings, rater_ids
 
 
-def WriteRatingFile(ratings: dict[str, list[Rating | None]], filename):
+def WriteRatingFile(
+    ratings: dict[str, list[Rating | None]],
+    filename: str,
+    rater_ids_dict: dict[str, list[str | None]],
+):
   """Write a file containing sysname/rating entries."""
   with open(filename, 'w') as f:
-    for sysname, rating_list in ratings.items():
-      for rating in rating_list:
+    for sysname, rating_list in sorted(ratings.items()):
+      rater_ids = rater_ids_dict[sysname]
+      for rating, rater_id in zip(rating_list, rater_ids):
         if rating is None:
           f.write(f'{sysname}\tNone\n')
         else:
-          f.write(f'{sysname}\t{json.dumps(rating.ToDict())}\n')
+          f.write(f'{sysname}\t{json.dumps(rating.ToDict())}\t{rater_id}\n')

@@ -19,7 +19,7 @@ routine.
 """
 
 import dataclasses
-from typing import Callable, Tuple
+from typing import Callable
 
 import numpy as np
 import numpy.typing
@@ -169,7 +169,7 @@ def _enumerate_pairs(
     metric_scores: np.ndarray,
     sample_rate: float,
     filter_nones: bool = True,
-) -> Tuple[list[_RankedPair], set[int]]:
+) -> tuple[list[_RankedPair], set[int]]:
   """Enumerates pairs for Kendall's tau."""
   mat1 = human_scores
   mat2 = metric_scores
