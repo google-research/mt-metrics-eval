@@ -27,10 +27,12 @@ This module provides:
 """
 
 import dataclasses
+import functools
 import itertools
 import math
 from typing import Callable
 import warnings
+from mt_metrics_eval import pce
 from mt_metrics_eval import tau_optimization
 import numpy as np
 import numpy.typing
@@ -119,6 +121,27 @@ class Correlation:
     return cf(self.gold_scores, self.metric_scores)
 
 
+def filter_gold_nones(
+    gold: ArrayLike, model: ArrayLike
+) -> tuple[ArrayLike, ArrayLike]:
+  """Filters pairs where the gold score is None.
+
+  If gold[i] is None, gold[i] and model[i] will be removed and not returned in
+  the output.
+
+  Args:
+    gold: The gold scores.
+    model: The model scores.
+
+  Returns:
+    The gold and model scores where the gold score is not None.
+  """
+  filt = [(v1, v2) for v1, v2 in zip(gold, model) if v1 is not None]
+  if not filt:
+    return [], []
+  return zip(*filt)
+
+
 class AverageCorrelation:
   """Wrap a correlation function to provide averaging and None filtering."""
 
@@ -188,9 +211,8 @@ class AverageCorrelation:
       warnings.simplefilter('ignore')
       for r1, r2 in zip(mat1, mat2):
         if self._filter_nones:
-          filt = [(v1, v2) for v1, v2 in zip(r1, r2) if v1 is not None]
-          if not filt or len(filt) == 1: continue
-          r1, r2 = zip(*filt)
+          r1, r2 = filter_gold_nones(r1, r2)
+          if not r1 or len(r1) == 1: continue
         ret = self._corr_fcn(r1, r2, **self._corr_fcn_args)
         if not self._macro:
           k = ret[2] if len(ret) > 2 else len(r1)
@@ -562,6 +584,33 @@ def KendallWithTiesOpt(
   opt_result = tau_optimization.tau_optimization(
       metric, gold, tau_fn, sample_rate)
   return opt_result.best_tau, opt_result.best_threshold, opt_result
+
+
+def PairwiseConfidenceError(
+    gold_scores: list[ArrayLike],
+    metric_scores: list[ArrayLike],
+    num_sys: int,
+    num_permutations: int = 1000,
+    filter_nones: bool = False,
+) -> tuple[float, ...]:
+  """Calculates pairwise confidence error (PCE)."""
+  if filter_nones:
+    gold_scores, metric_scores = filter_gold_nones(
+        gold_scores, metric_scores
+    )
+
+  # Convert the gold and metric scores into N x M matrices where N is the
+  # number of systems and M is the number of segments.
+  gold = _Reshape(gold_scores, num_sys, 'sys')
+  metric = _Reshape(metric_scores, num_sys, 'sys')
+
+  gold_pvalues = pce.compute_pairwise_p_values(
+      gold, num_permutations=num_permutations
+  )
+  metric_pvalues = pce.compute_pairwise_p_values(
+      metric, num_permutations=num_permutations
+  )
+  return (pce.compute_one_minus_pce(gold_pvalues, metric_pvalues),)
 
 
 def _Reshape(vector, num_sys, average_by):
@@ -944,4 +993,3 @@ class Sample:
     """Extract selected items from vector of numeric values."""
     assert len(v) == self.total_size
     return np.asarray(v)[self.sample]
-

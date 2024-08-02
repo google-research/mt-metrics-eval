@@ -50,6 +50,7 @@ CORRELATION_FUNCTIONS = {
     'KendallLike': stats.KendallLike,
     'KendallVariants': stats.KendallVariants,
     'KendallWithTiesOpt': stats.KendallWithTiesOpt,
+    'pce': None,  # Implicit in CompareMetricsWithPairwiseConfidenceError
 }
 
 
@@ -364,6 +365,18 @@ class Task:
           self.use_outliers, self.gold, self.primary,
           self.domain, self.k, psd, self.pval,
           parallel_file=parallel_file)
+    elif self.corr_fcn == 'pce':
+      # PCE is system-level, but it requires segment-level scores, so the
+      # Correlation objects actually require passing "seg" instead of
+      # `self.level`.
+      corrs = data.GetCorrelations(
+          _Evs(self.lang), 'seg', self.refs, self.close_refs, self.human,
+          self.use_outliers, self.gold, self.primary, self.domain,
+          metric_format='spreadsheet')
+      res = data.CompareMetricsWithPairwiseConfidenceError(
+          corrs, self.k, psd, self.pval,
+          self.replace_nans_with_zeros, self.perm_test,
+          parallel_file=parallel_file, **self.corr_fcn_args)
     else:
       corr_fcn = CORRELATION_FUNCTIONS[self.corr_fcn]
       corrs = data.GetCorrelations(
@@ -820,6 +833,53 @@ def WMT23(lps: list[str] | None = None, primary=True, k=0, gold=None):
     Add(lp, 'seg', 'pearson', human, gold)
     Add(lp, 'seg', 'KendallWithTiesOpt', human, gold,
         avg_by='item', perm_test='pairs', corr_fcn_args={'sample_rate': 1.0})
+
+  weights = [len(lps)] + [1] * (len(tasks) - 1)
+  weights = [w / sum(weights) for w in weights]
+
+  return tasks, weights
+
+
+def WMT24OnWMT23(lps: list[str] | None = None, primary=True, k=0, gold=None):
+  """Generate the WMT24 task set for WMT23 and associated weight vector."""
+
+  # Not strictly necessary to declare this, because setting human=True will
+  # only score human outputs if any are available, but we want to make the
+  # human attribute reflect what actually got used, and also want to avoid
+  # having to load the EvalSets at this point to get this info automatically.
+  lps_with_multiple_refs = {'en-he', 'he-en'}
+
+  def Add(lp, level, corr_fcn, human, gold, **kw_args):
+    tasks.Append(Task(
+        'wmt23', lp, level=level, corr_fcn=corr_fcn, human=human, gold=gold,
+        primary=primary, k=k, **kw_args))
+
+  if lps is None: lps = ['en-de', 'he-en', 'zh-en']
+  lps = sorted(lps)
+
+  tasks = TaskSet()
+
+  # For each language pair: PCE at the system-level and accuracy at the
+  # segment-level.
+  for lp in lps:
+    human = lp in lps_with_multiple_refs
+    Add(
+        lp,
+        'sys',
+        'pce',
+        human=human,
+        gold=[gold] * len(lps) if gold else None,
+    )
+    Add(
+        lp,
+        'seg',
+        'KendallWithTiesOpt',
+        human,
+        gold,
+        avg_by='item',
+        perm_test='pairs',
+        corr_fcn_args={'sample_rate': 1.0},
+    )
 
   weights = [len(lps)] + [1] * (len(tasks) - 1)
   weights = [w / sum(weights) for w in weights]

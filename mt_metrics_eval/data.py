@@ -17,6 +17,7 @@
 import ast
 import collections
 import copy
+import functools
 import itertools
 import os
 import sys
@@ -1023,6 +1024,44 @@ def CompareMetricsWithGlobalAccuracy(
   sig_matrix, draws_index, draws_list = ComputeSigMatrix(
       merged_corrs, corrs_and_ranks, _Accuracy, 'none', k, psd, False, 'scores',
       parallel_file)
+  ranks = AssignRanks(sig_matrix, pval)
+  for i, m in enumerate(corrs_and_ranks):
+    corrs_and_ranks[m][1] = ranks[i]
+
+  return corrs_and_ranks, sig_matrix, draws_index, draws_list
+
+
+def CompareMetricsWithPairwiseConfidenceError(
+    metric_corrs: dict[str, stats.Correlation],
+    k: int = 1000,
+    psd: stats.PermutationSigDiffParams = stats.PermutationSigDiffParams(),
+    pval: float = 0.05,
+    replace_nans_with_zeros: bool = False,
+    perm_test: str = 'scores',
+    parallel_file: str = None,
+) -> tuple[dict[str, tuple[float, float]], np.ndarray, np.ndarray, np.ndarray]:
+  """Compare a set of metrics using pairwise confidence error."""
+  assert metric_corrs
+
+  first_corr = list(metric_corrs.values())[0]
+  pce_wrapper = functools.partial(
+      stats.PairwiseConfidenceError,
+      num_sys=first_corr.num_sys,
+      filter_nones=first_corr.none_count > 0,
+  )
+
+  # Compute metric correlations, ordered by decreasing correlation.
+  corrs_and_ranks = {}
+  for m, c in metric_corrs.items():
+    corrs_and_ranks[m] = [pce_wrapper(c.gold_scores, c.metric_scores)[0], 0]
+  # Use metric name as secondary sort criterion to stablize ties.
+  corrs_and_ranks = dict(
+      sorted(corrs_and_ranks.items(), key=lambda x: (-x[1][0], x[0])))
+
+  # Compute significance matrix and determine ranks.
+  sig_matrix, draws_index, draws_list = ComputeSigMatrix(
+      metric_corrs, corrs_and_ranks, pce_wrapper, 'none', k,
+      psd, replace_nans_with_zeros, perm_test, parallel_file)
   ranks = AssignRanks(sig_matrix, pval)
   for i, m in enumerate(corrs_and_ranks):
     corrs_and_ranks[m][1] = ranks[i]
