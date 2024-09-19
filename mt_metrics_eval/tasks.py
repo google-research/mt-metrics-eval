@@ -431,7 +431,7 @@ class TaskResults:
   def range(self) -> tuple[float, float]:
     """Return the range of possible scores for this task."""
     corr_fcn = self.attr_vals['corr_fcn']
-    if corr_fcn == 'accuracy' or (
+    if corr_fcn == 'accuracy' or corr_fcn == 'pce' or (
         corr_fcn == 'KendallWithTiesOpt' and
         "'variant':'23'" not in self.attr_vals['corr_fcn_args']):
       return (0, 1)  # accuracy
@@ -882,6 +882,53 @@ def WMT24OnWMT23(lps: list[str] | None = None, primary=True, k=0, gold=None):
     )
 
   weights = [len(lps)] + [1] * (len(tasks) - 1)
+  weights = [w / sum(weights) for w in weights]
+
+  return tasks, weights
+
+
+def WMT24(lps: list[str] | None = None, primary=True, k=0, gold=None):
+  """Generate the WMT24 task set associated weight vector."""
+
+  # Not strictly necessary to declare this, because setting human=True will
+  # only score human outputs if any are available, but we want to make the
+  # human attribute reflect what actually got used, and also want to avoid
+  # having to load the EvalSets at this point to get this info automatically.
+  lps_with_multiple_refs = {'en-de'}
+
+  def Add(lp, level, corr_fcn, human, gold, **kw_args):
+    tasks.Append(Task(
+        'wmt24', lp, level=level, corr_fcn=corr_fcn, human=human, gold=gold,
+        primary=primary, k=k, **kw_args))
+
+  if lps is None: lps = ['en-de', 'en-es', 'ja-zh']
+  lps = sorted(lps)
+
+  tasks = TaskSet()
+
+  # For each language pair: PCE at the system-level and accuracy at the
+  # segment-level.
+  for lp in lps:
+    human = lp in lps_with_multiple_refs
+    Add(
+        lp,
+        'sys',
+        'pce',
+        human=human,
+        gold=[gold] * len(lps) if gold else None,
+    )
+    Add(
+        lp,
+        'seg',
+        'KendallWithTiesOpt',
+        human,
+        gold,
+        avg_by='item',
+        perm_test='pairs',
+        corr_fcn_args={'sample_rate': 1.0},
+    )
+
+  weights = [1] * len(tasks)
   weights = [w / sum(weights) for w in weights]
 
   return tasks, weights

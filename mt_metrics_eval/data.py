@@ -788,6 +788,14 @@ def GetCorrelations(evs: EvalSet, level: str, main_refs: set[str],
   if gold_name == 'std':
     gold_name = evs.StdHumanScoreName(level)
   gold_scores = _Filter(evs.Scores(level, gold_name))
+
+  # gold_scores may contain systems that don't have any gold scores. Select
+  # just the subset of systems that does.
+  gold_scores = {
+      system: scores for system, scores in gold_scores.items()
+      if scores and any(score is not None for score in scores)
+  }
+
   sys_names = sys_names.intersection(gold_scores)
 
   # Generate 'Correlation' objects for all specified metrics.

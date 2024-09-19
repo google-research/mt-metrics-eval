@@ -97,7 +97,32 @@ WMT23_DA = MetaInfo(
     {'sys': 'da-sqm', 'domain': 'da-sqm', 'seg': 'da-sqm'},
     set(), WMT23_PRIMARIES, WMT23_BASELINES)
 
+WMT24_PRIMARIES = {
+    'BLCOM_1', 'bright-qe', 'chrfS', 'damonmonli', 'gemba_esa', 'MEE4',
+    'metametrics_mt_mqm_hybrid_kendall', 'metametrics_mt_mqm_qe_kendall.seg.s',
+    'MetricX-24-Hybrid', 'MetricX-24-Hybrid-QE', 'XCOMET', 'XCOMET-QE',
+    'XLsimMqm', 'BERTScore', 'BLEU', 'BLEURT-20', 'chrF', 'COMET-22', 
+    'CometKiwi', 'PrismRefMedium', 'PrismRefSmall', 'spBLEU', 'YiSi-1',
+    'sentinel-cand-mqm', 'sentinel-ref-mqm', 'sentinel-src-mqm',
+}
+
+WMT24_BASELINES = {
+    'BERTScore', 'BLEU', 'BLEURT-20', 'chrF', 'COMET-22', 'CometKiwi',
+    'PrismRefMedium', 'PrismRefSmall', 'spBLEU', 'YiSi-1',
+    'sentinel-cand-mqm', 'sentinel-ref-mqm', 'sentinel-src-mqm',
+}
+
+WMT24 = MetaInfo(
+    'refA',
+    {'sys': 'mqm', 'domain': 'mqm', 'seg': 'mqm'},
+    {'MSLC'}, WMT24_PRIMARIES, WMT24_BASELINES)
+
 DATA = {
+    'wmt24': {
+        'en-de': dataclasses.replace(WMT24, std_ref='refB'),
+        'en-es': WMT24,
+        'ja-zh': WMT24,
+    },
     'wmt23.sent': {'en-de': WMT23},
     'wmt23': {
         'en-de': dataclasses.replace(WMT23, outlier_systems={'synthetic_ref'}),
