@@ -117,11 +117,25 @@ WMT24 = MetaInfo(
     {'sys': 'mqm', 'domain': 'mqm', 'seg': 'mqm'},
     {'MSLC'}, WMT24_PRIMARIES, WMT24_BASELINES)
 
+WMT24_ESA = MetaInfo(
+    'refA',
+    {'sys': 'esa', 'domain': 'esa', 'seg': 'esa'},
+    set(), WMT24_PRIMARIES, WMT24_BASELINES
+)
+
 DATA = {
     'wmt24': {
         'en-de': dataclasses.replace(WMT24, std_ref='refB'),
         'en-es': WMT24,
         'ja-zh': WMT24,
+        'cs-uk': WMT24_ESA,
+        'en-cs': WMT24_ESA,
+        'en-hi': WMT24_ESA,
+        'en-is': WMT24_ESA,
+        'en-ja': WMT24_ESA,
+        'en-ru': WMT24_ESA,
+        'en-uk': WMT24_ESA,
+        'en-zh': WMT24_ESA,
     },
     'wmt23.sent': {'en-de': WMT23},
     'wmt23': {
