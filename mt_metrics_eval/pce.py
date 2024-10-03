@@ -17,7 +17,7 @@
 import numpy as np
 
 
-def compute_pairwise_p_values(seg_scores, num_permutations=1000):
+def compute_pairwise_p_values(seg_scores, num_permutations=1000, seed: int = 4):
     """
     Author: Brian Thompson
     Date: June 2024
@@ -91,12 +91,13 @@ def compute_pairwise_p_values(seg_scores, num_permutations=1000):
 
     :param seg_scores: segment-level scores, with shape (num_systems, num_segments)
     :param num_permutations: Number of permutations for permutation test
+    :param seed: The random seed
     :return: np.array of size (num_systems, num_systems), where the upper triangle has been populated
        with p-values for the hypothesis that system[i] > system[j]
     """
     num_systems, num_segments = seg_scores.shape
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed)
     # initialize in range [0, 1)
     two_m_minus_one = rng.random(size=(num_permutations, num_segments), dtype=np.float32)
     # quantize to 0 or 1, in place
