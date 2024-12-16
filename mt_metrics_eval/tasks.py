@@ -881,7 +881,7 @@ def WMT24OnWMT23(lps: list[str] | None = None, primary=True, k=0, gold=None):
         corr_fcn_args={'sample_rate': 1.0},
     )
 
-  weights = [len(lps)] + [1] * (len(tasks) - 1)
+  weights = [1] * len(tasks)
   weights = [w / sum(weights) for w in weights]
 
   return tasks, weights
