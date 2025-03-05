@@ -78,6 +78,10 @@ class CorrelationTest(unittest.TestCase):
     self.assertEqual(
         corr.KendallWithTiesOpt(variant='acc23', sample_rate=1.0)[0], 0.7)
 
+  def testPairwiseConfidenceError(self):
+    corr = stats.Correlation(2, [1, 2, 3, 2, 3, 4], [2, 2, 4, 1, 3, 5])
+    self.assertAlmostEqual(corr.PairwiseConfidenceError()[0], 0.872, places=3)
+
 
 class AverageCorrelationTest(unittest.TestCase):
 
@@ -167,6 +171,13 @@ class AverageCorrelationTest(unittest.TestCase):
     ref = stats.KendallWithTiesOpt(
         g, m, num_sys=2, average_by='sys', variant='acc23', sample_rate=1.0)
     self.assertEqual(res[:2], ref[:2])
+
+  def testPairwiseConfidenceError(self):
+    g, m = [1, None, 3, 4, None, 6], [2, 1, 8, 3, 5, 6]
+    res = stats.AverageCorrelation(
+        stats.PairwiseConfidenceError, num_sys=2)(g, m)
+    ref = stats.PairwiseConfidenceError(g, m, num_sys=2, filter_nones=True)
+    self.assertEqual(res[0], ref[0])
 
 
 class CorrelationFunctionsTest(unittest.TestCase):

@@ -120,6 +120,11 @@ class Correlation:
         sample_rate=sample_rate)
     return cf(self.gold_scores, self.metric_scores)
 
+  def PairwiseConfidenceError(self, average_by='none'):
+    """System-level soft pairwise accuracy."""
+    cf = self.AverageCorrelation(PairwiseConfidenceError, average_by)
+    return cf(self.gold_scores, self.metric_scores)
+
 
 def filter_gold_nones(
     gold: ArrayLike, model: ArrayLike
@@ -205,6 +210,12 @@ class AverageCorrelation:
           gold_vect, metric_vect, num_sys=self._num_sys,
           average_by=self._average_by, **self._corr_fcn_args)
       return corr, 0, mat1.shape[0]
+    # PairwiseConfidenceError does its own averaging.
+    elif self._corr_fcn is PairwiseConfidenceError:
+      corr = PairwiseConfidenceError(
+          gold_vect, metric_vect, num_sys=self._num_sys,
+          filter_nones=self._filter_nones, **self._corr_fcn_args)
+      return corr[0], 0, mat1.shape[0]
 
     tot_corr, tot_pval, n, k = 0, 0, 0, 1
     with warnings.catch_warnings():
