@@ -19,6 +19,7 @@ import collections
 import copy
 import functools
 import itertools
+import json
 import os
 import sys
 import tarfile
@@ -530,20 +531,23 @@ class EvalSet:
     # Canonicalized domain order, since there is no natural order.
     self._domains = {k: self._domains[k] for k in sorted(self._domains)}
     self._docs = _MapPositions([d.split()[1] for d in doc_lines], True)
-    self._src = _ReadTextFile(os.path.join(d, 'sources', '%s.txt' % lp))
+    self._src = _ReadSourceFile(os.path.join(d, 'sources'), lp)
 
     self._all_refs = {}
-    for filename in glob.glob(os.path.join(d, 'references', '%s.*.txt' % lp)):
+    for filename in glob.glob(os.path.join(d, 'references', '%s.*.*' % lp)):
       refname = filename.split('.')[-2]
       if '-' in refname or refname in ['all', 'src']:
         assert False, f'Invalid reference name: {refname}'
-      self._all_refs[refname] = _ReadTextFile(filename)
+      if refname in self._all_refs:
+        raise ValueError(f'Duplicate reference name: {refname}')
+      self._all_refs[refname] = _ReadReferenceFile(filename)
 
     self._outlier_sys_names, self._human_sys_names = set(), set()
     self._sys_outputs = {}
-    for filename in glob.glob(os.path.join(d, 'system-outputs', lp, '*.txt')):
-      sysname = os.path.basename(filename)[:-len('.txt')]
-      self._sys_outputs[sysname] = _ReadTextFile(filename)
+    for filename in glob.glob(os.path.join(d, 'system-outputs', lp, '*.*')):
+      extension = os.path.splitext(filename)[1]
+      sysname = os.path.basename(filename)[:-len(extension)]
+      self._sys_outputs[sysname] = _ReadSystemOutputFile(filename)
       if sysname in self._all_refs:
         self._human_sys_names.add(sysname)
 
@@ -651,6 +655,44 @@ def _ReadTextFile(filename):
       else:
         lines.append(line)
   return lines
+
+
+def _ReadFieldFromJsonl(filename: str, field: str) -> list[str]:
+  values = []
+  with open(filename) as f:
+    for line in f:
+      example = json.loads(line)
+      values.append(example[field])
+  return values
+
+
+def _ReadSourceFile(source_dir: str, lp: str) -> list[str]:
+  txt_file = os.path.join(source_dir, '%s.txt' % lp)
+  jsonl_file = os.path.join(source_dir, '%s.jsonl' % lp)
+  if gfile.Exists(txt_file):
+    return _ReadTextFile(txt_file)
+  elif gfile.Exists(jsonl_file):
+    return _ReadFieldFromJsonl(jsonl_file, 'source')
+  else:
+    raise ValueError(f'No source file found for {lp}')
+
+
+def _ReadReferenceFile(filename: str) -> list[str]:
+  if filename.endswith('.txt'):
+    return _ReadTextFile(filename)
+  elif filename.endswith('.jsonl'):
+    return _ReadFieldFromJsonl(filename, 'target')
+  else:
+    raise ValueError(f'Unsupported reference file type: {filename}')
+
+
+def _ReadSystemOutputFile(filename: str) -> list[str]:
+  if filename.endswith('.txt'):
+    return _ReadTextFile(filename)
+  elif filename.endswith('.jsonl'):
+    return _ReadFieldFromJsonl(filename, 'hypothesis')
+  else:
+    raise ValueError(f'Unsupported system output file type: {filename}')
 
 
 def ReadScoreFile(filename):
