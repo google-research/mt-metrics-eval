@@ -23,7 +23,7 @@ import json
 import os
 import sys
 import tarfile
-from typing import Callable, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 import urllib.request
 import apache_beam as beam
 from mt_metrics_eval import meta_info
@@ -295,6 +295,11 @@ class EvalSet:
   def RaterIdsPerSeg(self, rating_name: str) -> dict[str, list[str | None]]:
     """Returns a dict of system to rater IDs for each segment."""
     return self._rater_ids[rating_name]
+
+  @property
+  def metadata(self) -> dict[str, list[dict[str, Any]]]:
+    """A dict of system to extra metadata for each translation."""
+    return self._metadata
 
   def Correlation(self,
                   gold_scores: dict[str, list[float]],
@@ -593,6 +598,13 @@ class EvalSet:
         md = os.path.join(md, name, 'metric-scores', lp)
         self.AddMetricsFromDir(md, repair=not strict)
 
+    # Load metadata for the translations.
+    self._metadata = {}
+    for filename in glob.glob(os.path.join(d, 'metadata', lp, '*.jsonl')):
+      extension = os.path.splitext(filename)[1]
+      sysname = os.path.basename(filename)[:-len(extension)]
+      self._metadata[sysname] = _ReadMetadataFile(filename)
+
     # Check contents
     for txt in self.all_refs.values():
       assert len(txt) == len(self.src), f'Bad length for reference {txt}'
@@ -693,6 +705,14 @@ def _ReadSystemOutputFile(filename: str) -> list[str]:
     return _ReadFieldFromJsonl(filename, 'hypothesis')
   else:
     raise ValueError(f'Unsupported system output file type: {filename}')
+
+
+def _ReadMetadataFile(filename: str) -> list[dict[str, Any]]:
+  metadata = []
+  with open(filename, 'r') as f:
+    for line in f:
+      metadata.append(json.loads(line))
+  return metadata
 
 
 def ReadScoreFile(filename):
