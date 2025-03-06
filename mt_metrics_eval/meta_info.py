@@ -123,7 +123,73 @@ WMT24_ESA = MetaInfo(
     set(), WMT24_PRIMARIES, WMT24_BASELINES
 )
 
+WMT24PP_PRIMARIES = {
+    'BLEU', 'ChrF', 'MetricX-24', 'MetricX-24-QE', 'XCOMET', 'XCOMET-QE',
+    'COMETKiwi-23', 'Gemini-DA', 'Gemini-DA-QE'
+}
+
+WMT24PP = MetaInfo('posteditA', {}, set(), WMT24PP_PRIMARIES, None)
+
+WMT24PP_DATA = {
+    'en-ar_EG': WMT24PP,
+    'en-ar_SA': WMT24PP,
+    'en-bg_BG': WMT24PP,
+    'en-bn_IN': WMT24PP,
+    'en-ca_ES': WMT24PP,
+    'en-cs_CZ': WMT24PP,
+    'en-da_DK': WMT24PP,
+    'en-de_DE': dataclasses.replace(WMT24PP, std_ref='posteditB'),
+    'en-el_GR': WMT24PP,
+    'en-es_MX': WMT24PP,
+    'en-et_EE': WMT24PP,
+    'en-fa_IR': WMT24PP,
+    'en-fi_FI': WMT24PP,
+    'en-fil_PH': WMT24PP,
+    'en-fr_CA': WMT24PP,
+    'en-fr_FR': WMT24PP,
+    'en-gu_IN': WMT24PP,
+    'en-he_IL': WMT24PP,
+    'en-hi_IN': WMT24PP,
+    'en-hr_HR': WMT24PP,
+    'en-hu_HU': WMT24PP,
+    'en-id_ID': WMT24PP,
+    'en-is_IS': dataclasses.replace(WMT24PP, std_ref='refA'),
+    'en-it_IT': WMT24PP,
+    'en-ja_JP': WMT24PP,
+    'en-kn_IN': WMT24PP,
+    'en-ko_KR': WMT24PP,
+    'en-lt_LT': WMT24PP,
+    'en-lv_LV': WMT24PP,
+    'en-ml_IN': WMT24PP,
+    'en-mr_IN': WMT24PP,
+    'en-nl_NL': WMT24PP,
+    'en-no_NO': WMT24PP,
+    'en-pa_IN': WMT24PP,
+    'en-pl_PL': WMT24PP,
+    'en-pt_BR': WMT24PP,
+    'en-pt_PT': WMT24PP,
+    'en-ro_RO': WMT24PP,
+    'en-ru_RU': WMT24PP,
+    'en-sk_SK': WMT24PP,
+    'en-sl_SI': WMT24PP,
+    'en-sr_RS': WMT24PP,
+    'en-sv_SE': WMT24PP,
+    'en-sw_KE': WMT24PP,
+    'en-sw_TZ': WMT24PP,
+    'en-ta_IN': WMT24PP,
+    'en-te_IN': WMT24PP,
+    'en-th_TH': WMT24PP,
+    'en-tr_TR': WMT24PP,
+    'en-uk_UA': WMT24PP,
+    'en-ur_PK': WMT24PP,
+    'en-vi_VN': WMT24PP,
+    'en-zh_CN': WMT24PP,
+    'en-zh_TW': WMT24PP,
+    'en-zu_ZA': WMT24PP,
+}
+
 DATA = {
+    'wmt24pp': WMT24PP_DATA,
     'wmt24': {
         'en-de': dataclasses.replace(WMT24, std_ref='refB'),
         'en-es': WMT24,
