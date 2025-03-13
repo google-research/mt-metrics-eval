@@ -681,9 +681,9 @@ def _ReadFieldFromJsonl(filename: str, field: str) -> list[str]:
 def _ReadSourceFile(source_dir: str, lp: str) -> list[str]:
   txt_file = os.path.join(source_dir, '%s.txt' % lp)
   jsonl_file = os.path.join(source_dir, '%s.jsonl' % lp)
-  if gfile.Exists(txt_file):
+  if os.path.exists(txt_file):
     return _ReadTextFile(txt_file)
-  elif gfile.Exists(jsonl_file):
+  elif os.path.exists(jsonl_file):
     return _ReadFieldFromJsonl(jsonl_file, 'source')
   else:
     raise ValueError(f'No source file found for {lp}')
