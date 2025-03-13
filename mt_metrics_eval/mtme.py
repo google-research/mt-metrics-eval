@@ -455,7 +455,7 @@ def GetNewMetricDirs():
   if FLAGS.add_metrics_from_dir:
     for lp in lps:
       new_dir = os.path.join(FLAGS.add_metrics_from_dir, lp)
-      if gfile.IsDirectory(new_dir):
+      if os.path.isdir(new_dir):
         new_metric_dirs[lp] = new_dir
     if len(lps) == 1 and lps[0] not in new_metric_dirs:
       new_metric_dirs[lps[0]] = FLAGS.add_metrics_from_dir

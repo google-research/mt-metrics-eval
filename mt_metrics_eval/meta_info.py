@@ -188,6 +188,7 @@ WMT24PP_DATA = {
     'en-zu_ZA': WMT24PP,
 }
 
+
 DATA = {
     'wmt24pp': WMT24PP_DATA,
     'wmt24': {

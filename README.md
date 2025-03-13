@@ -211,6 +211,31 @@ different or even missing.
 This is less of a problem with more recent WMT years.
 
 
+## WMT24++ Data
+
+This package also contains the system outputs and metric scores that were
+collected as part of the paper [WMT24++: Expanding the Language Coverage of WMT24 to 55 Languages & Dialects](https://arxiv.org/abs/2502.12404).
+The data can be accessed via the EvalSet for `"wmt24pp"` (e.g., `EvalSet("wmt24pp", "en-de_DE")`).
+Due to restrictions, we are unable to release the outputs from all of the MT
+systems and LLMs that were reported in the paper.
+The set of systems that were released can be accessed via the `sys_names` property
+of the EvalSet.
+
+If you use this data, please cite
+
+```
+@misc{wmt24pp,
+      title={{WMT24++: Expanding the Language Coverage of WMT24 to 55 Languages & Dialects}}, 
+      author={Daniel Deutsch and Eleftheria Briakou and Isaac Caswell and Mara Finkelstein and Rebecca Galor and Juraj Juraska and Geza Kovacs and Alison Lui and Ricardo Rei and Jason Riesa and Shruti Rijhwani and Parker Riley and Elizabeth Salesky and Firas Trabelsi and Stephanie Winkler and Biao Zhang and Markus Freitag},
+      year={2025},
+      eprint={2502.12404},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2502.12404}, 
+}
+```
+
+
 ## Conversion scripts
 
 The `converters` module contains scripts to convert between different formats
