@@ -553,5 +553,9 @@ def main(argv):
       PrintComparison(res_base, res_comp, fh)
 
 
+def main_cli():
+  app.run(main)
+
+
 if __name__ == '__main__':
   app.run(main)
