@@ -36,7 +36,7 @@ import glob
 
 
 
-TGZ = 'https://storage.googleapis.com/mt-metrics-eval/mt-metrics-eval-v2.tgz'
+TGZ = 'https://data.statmt.org/wmt26/mt-metrics-eval-v2.tgz'
 
 # This string is used to represent a missing or null translation in a text file.
 # This is for standarization purposes only. If this string is on a line in a
