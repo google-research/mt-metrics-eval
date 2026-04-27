@@ -25,9 +25,7 @@ API.
 You need python 3.10 or later. To install:
 
 ```bash
-git clone https://github.com/google-research/mt-metrics-eval.git
-cd mt-metrics-eval
-pip install .
+pip install git+https://github.com/google-research/mt-metrics-eval.git
 ```
 
 ## Downloading the data
@@ -35,7 +33,6 @@ pip install .
 This must be done before using the toolkit. You can either use the mtme script:
 
 ```bash
-alias mtme='python3 -m mt_metrics_eval.mtme'
 mtme --download  # Puts ~2G of data into $HOME/.mt-metrics-eval.
 ```
 
@@ -51,6 +48,7 @@ tar xfz mt-metrics-eval-v2.tgz
 Once data is downloaded, you can optionally test the install:
 
 ```bash
+git clone https://github.com/google-research/mt-metrics-eval.git
 python3 -m unittest discover mt_metrics_eval "*_test.py"  # Takes ~70 seconds.
 ```
 
