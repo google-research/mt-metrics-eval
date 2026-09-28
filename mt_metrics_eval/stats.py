@@ -1037,7 +1037,7 @@ class Sample:
     """Partition `size` elements according to given proportions."""
 
     # Shuffle to avoid bias when tie breaking.
-    shuffled_ind = np.random.permutation(len(proportions))
+    shuffled_ind = self._rng.permutation(len(proportions))
     proportions = proportions[shuffled_ind]
     bin_sizes = bin_sizes[shuffled_ind]
 
@@ -1076,7 +1076,7 @@ class Sample:
     self.bin_sizes = bin_sizes
     self.seed = seed
 
-    rng = np.random.default_rng(seed) if seed else np.random.default_rng()
+    rng = self._rng = np.random.default_rng(seed)
     if size == 0 or size > total_size:
       size = total_size
     if method == 'uniform':
