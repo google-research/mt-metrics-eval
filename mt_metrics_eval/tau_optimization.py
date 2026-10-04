@@ -170,13 +170,17 @@ def _enumerate_pairs(
     sample_rate: float,
     filter_nones: bool = True,
 ) -> tuple[list[_RankedPair], set[int]]:
-  """Enumerates pairs for Kendall's tau."""
+  """Enumerates sampled pairs for Kendall's tau.
+
+  When subsampling, every row with at least one comparable pair contributes at
+  least one pair. This prevents a random draw from silently dropping a row from
+  the row-wise average, or dropping every row and dividing by zero.
+  """
   mat1 = human_scores
   mat2 = metric_scores
   pairs = []
   rows = set()
   for row, (r1, r2) in enumerate(zip(mat1, mat2)):
-    # Filter Nones
     if filter_nones:
       filt = [
           (v1, v2)
@@ -187,13 +191,24 @@ def _enumerate_pairs(
         continue
       r1, r2 = zip(*filt)
 
-    for i in range(len(r1)):
-      for j in range(i + 1, len(r1)):
-        if sample_rate == 1.0 or np.random.random() <= sample_rate:
-          pairs.append(_RankedPair(r1[i], r1[j], r2[i], r2[j], row))
-          rows.add(row)
-  return pairs, rows
+    row_pairs = [
+        _RankedPair(r1[i], r1[j], r2[i], r2[j], row)
+        for i in range(len(r1))
+        for j in range(i + 1, len(r1))
+    ]
+    if not row_pairs:
+      continue
 
+    if sample_rate == 1.0:
+      sampled = row_pairs
+    else:
+      sampled = [pair for pair in row_pairs if np.random.random() <= sample_rate]
+      if not sampled:
+        sampled = [row_pairs[np.random.randint(len(row_pairs))]]
+
+    pairs.extend(sampled)
+    rows.add(row)
+  return pairs, rows
 
 def tau_optimization(
     metric_scores: numpy.typing.ArrayLike,
@@ -251,6 +266,8 @@ def tau_optimization(
 
   pairs, rows = _enumerate_pairs(human_scores, metric_scores, sample_rate)
   num_rows = len(rows)
+  if not num_rows:
+    raise ValueError('No valid score pairs available for tau optimization.')
 
   # Initialize the sufficient stats per row
   row_to_stats = {row: TauSufficientStats() for row in rows}

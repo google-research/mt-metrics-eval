@@ -17,6 +17,7 @@
 from mt_metrics_eval import tau_optimization
 import numpy as np
 import unittest
+from unittest import mock
 
 
 class TauOptimizationTest(unittest.TestCase):
@@ -99,6 +100,47 @@ class TauOptimizationTest(unittest.TestCase):
         sample_rate=0.5,
     )
     self.assertEqual(result.thresholds, [0, 6, 8, 14])
+
+
+  def test_sampling_keeps_every_row_with_valid_pairs(self):
+    human = np.array([[1, 2, 3], [3, 2, 1]], dtype=object)
+    metric = np.array([[1, 4, 9], [2, 5, 8]], dtype=object)
+    # Force every Bernoulli draw to miss. The fallback draw should retain one
+    # pair from each eligible row instead of dropping the row from the average.
+    with mock.patch.object(np.random, 'random', return_value=1.0),          mock.patch.object(np.random, 'randint', side_effect=[0, 1]):
+      pairs, rows = tau_optimization._enumerate_pairs(
+          human, metric, sample_rate=0.1)
+    self.assertEqual(rows, {0, 1})
+    self.assertEqual([pair.row for pair in pairs], [0, 1])
+    self.assertEqual(len(pairs), 2)
+
+  def test_sampling_cannot_randomly_divide_by_zero_on_a_valid_row(self):
+    metric = [0, 2, 6]
+    human = [1, 2, 3]
+    with mock.patch.object(np.random, 'random', return_value=1.0),          mock.patch.object(np.random, 'randint', return_value=0):
+      result = tau_optimization.tau_optimization(
+          metric, human, tau_optimization.TauSufficientStats.acc_23,
+          sample_rate=0.01)
+    self.assertEqual(result.thresholds, [0.0, 2])
+    self.assertEqual(result.best_tau, 1.0)
+
+  def test_no_comparable_pairs_has_a_clear_error(self):
+    metric = [[1, None], [None, 2]]
+    human = [[1, None], [None, 2]]
+    with self.assertRaisesRegex(ValueError, 'No valid score pairs'):
+      tau_optimization.tau_optimization(
+          metric, human, tau_optimization.TauSufficientStats.acc_23,
+          sample_rate=0.5)
+
+  def test_full_sampling_behavior_is_unchanged(self):
+    human = np.array([[1, 2, 3], [3, 2, 1]])
+    metric = np.array([[1, 4, 9], [2, 5, 8]])
+    pairs, rows = tau_optimization._enumerate_pairs(
+        human, metric, sample_rate=1.0)
+    self.assertEqual(rows, {0, 1})
+    self.assertEqual(len(pairs), 6)
+    self.assertEqual([pair.row for pair in pairs], [0, 0, 0, 1, 1, 1])
+
 
   def test_regression_example(self):
     # Tests an example with input matrices. This result has not been manually
