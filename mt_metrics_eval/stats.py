@@ -147,6 +147,24 @@ def filter_gold_nones(
   return zip(*filt)
 
 
+def filter_gold_nones_by_column(
+    gold: ArrayLike, model: ArrayLike, num_sys: int
+) -> tuple[list[float], list[float]]:
+  """Keep packed segment columns with a gold score for every system.
+
+  Both vectors contain num_sys consecutive system rows. Dropping whole columns
+  preserves the segment pairing required by the PCE permutation test.
+  """
+  gold = np.asarray(gold).reshape(num_sys, -1)
+  model = np.asarray(model).reshape(num_sys, -1)
+  keep = (gold != None).all(axis=0)  # pylint: disable=singleton-comparison
+  if not keep.any():
+    raise ValueError(
+        'PCE requires at least one segment with gold scores for all systems.'
+    )
+  return gold[:, keep].ravel().tolist(), model[:, keep].ravel().tolist()
+
+
 def is_constant_array(arr: ArrayLike) -> bool:
   """Returns True if the array is the same value for all elements."""
   return np.all(arr == arr[0])
@@ -692,16 +710,24 @@ def PairwiseConfidenceError(
     num_permutations: int = 1000,
     filter_nones: bool = False,
 ) -> tuple[float, ...]:
-  """Calculates pairwise confidence error (PCE)."""
+  """Calculates PCE, dropping incomplete segment columns if filter_nones.
+
+  The paired permutation test requires the same segments for every system.
+  If filtering is enabled, a segment is retained only when every system has
+  a gold score for it.
+  """
   if filter_nones:
-    gold_scores, metric_scores = filter_gold_nones(
-        gold_scores, metric_scores
-    )
+    gold_scores, metric_scores = filter_gold_nones_by_column(
+        gold_scores, metric_scores, num_sys)
 
   # Convert the gold and metric scores into N x M matrices where N is the
   # number of systems and M is the number of segments.
   gold = _Reshape(gold_scores, num_sys, 'sys')
   metric = _Reshape(metric_scores, num_sys, 'sys')
+  if not gold.shape[1]:
+    raise ValueError(
+        'PCE requires at least one segment with gold scores for all systems.'
+    )
 
   gold_pvalues = pce.compute_pairwise_p_values(
       gold, num_permutations=num_permutations
@@ -806,8 +832,10 @@ def PermutationSigDiff(
     corr2: Statistics for metric2.
     corr_fcn: Function that maps two float vectors, followed by optional
       additional arguments, to a correlation value, followed by
-      optional additional elements. KendallVariants and KendallWithTiesOpt
-      trigger special behaviour.
+      optional additional elements. KendallVariants, KendallWithTiesOpt, and
+      PairwiseConfidenceError trigger special behaviour. For PCE (including
+      functools.partial wrappers), incomplete segment columns are removed
+      before permuting scores, preserving their alignment across systems.
     average_by: Either 'sys', 'item' or 'none' to group by rows, columns, or
       neither.
     k: Number of resampling runs.
@@ -822,6 +850,18 @@ def PermutationSigDiff(
     - k_used: number of resampling runs actually performed
     - list of resampled (metric2, metric1) correlation pairs
   """
+  base_corr_fcn = (
+      corr_fcn.func if isinstance(corr_fcn, functools.partial) else corr_fcn)
+  if (base_corr_fcn is PairwiseConfidenceError and
+      (corr1.none_count or corr2.none_count)):
+    if (corr1.num_sys != corr2.num_sys or
+        corr1.gold_scores != corr2.gold_scores):
+      raise ValueError('Gold scores or system counts for correlations differ')
+    corr1 = Correlation(corr1.num_sys, *filter_gold_nones_by_column(
+        corr1.gold_scores, corr1.metric_scores, corr1.num_sys))
+    corr2 = Correlation(corr2.num_sys, *filter_gold_nones_by_column(
+        corr2.gold_scores, corr2.metric_scores, corr2.num_sys))
+
   lens, gold, mscores1, mscores2 = _ReshapeAndFilter(corr1, corr2, average_by)
   mscores1 = scipy.stats.zscore(mscores1)
   mscores2 = scipy.stats.zscore(mscores2)
